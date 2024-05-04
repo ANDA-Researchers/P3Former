@@ -1,0 +1,26 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "test.py",
+            "console": "integratedTerminal",
+            "env": {"CUDA_HOME": "$CONDA_PREFIX", "CUDA_VISIBLE_DEVICES": "0"},
+            "args": ["configs/p3former/p3former_8xb2_3x_semantickitti.py", "semantickitti_val_62.6.pth"]
+        },
+        // {
+        //     "name": "evaluate",
+        //     "type": "debugpy",
+        //     "request": "launch",
+        //     "program": "mask_pls/scripts/evaluate_model.py",
+        //     "console": "integratedTerminal",
+        //     "env": {"CUDA_HOME": "$CONDA_PREFIX", "CUDA_VISIBLE_DEVICES": "0"},
+        //     "args": ["--w", "experiments/mask_pls/default/version_6/checkpoints/last.ckpt"]
+        // }
+    ]
+}
