@@ -3,3 +3,4 @@ __pycache__
 *.pth*
 work_dirs/
 view?usp=drive_link
+*.whl*

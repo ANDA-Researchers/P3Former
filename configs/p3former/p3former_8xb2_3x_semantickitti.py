@@ -30,7 +30,9 @@ model = dict(
         mask_channels=(256, 256, 256, 256, 256),
         thing_class=[0,1,2,3,4,5,6,7],
         stuff_class=[8,9,10,11,12,13,14,15,16,17,18],
-        ignore_index=19
+        ignore_index=19,
+        pe_type='None',
+        use_pa_seg=False
     ))
 
 
@@ -40,7 +42,7 @@ optim_wrapper = dict(
     optimizer=dict(type='AdamW', lr=lr, weight_decay=0.01))
 
 
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=36, val_interval=1)
+train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=36, val_interval=2)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 
@@ -54,9 +56,9 @@ param_scheduler = [
         gamma=0.2)
 ]
 
-train_dataloader = dict(batch_size=2, )
+train_dataloader = dict(batch_size=1, )
 
-default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=5))
+default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=1))
 
 custom_imports = dict(
     imports=[
