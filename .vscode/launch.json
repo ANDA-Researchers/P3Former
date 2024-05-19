@@ -13,14 +13,14 @@
             "env": {"CUDA_HOME": "$CONDA_PREFIX", "CUDA_VISIBLE_DEVICES": "0"},
             "args": ["configs/p3former/p3former_8xb2_3x_semantickitti.py", "semantickitti_val_62.6.pth", "--work_dir"]
         },
-        // {
-        //     "name": "evaluate",
-        //     "type": "debugpy",
-        //     "request": "launch",
-        //     "program": "mask_pls/scripts/evaluate_model.py",
-        //     "console": "integratedTerminal",
-        //     "env": {"CUDA_HOME": "$CONDA_PREFIX", "CUDA_VISIBLE_DEVICES": "0"},
-        //     "args": ["--w", "experiments/mask_pls/default/version_6/checkpoints/last.ckpt"]
-        // }
+        {
+            "name": "train",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "train.py",
+            "console": "integratedTerminal",
+            "env": {"CUDA_HOME": "$CONDA_PREFIX", "CUDA_VISIBLE_DEVICES": "0"},
+            "args": ["configs/p3former/p3former_8xb2_3x_semantickitti.py"]
+        }
     ]
 }
