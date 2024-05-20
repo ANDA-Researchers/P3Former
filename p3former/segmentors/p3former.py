@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import maximum_filter
-
+from datetime import datetime
 import torch
 from mmdet3d.registry import MODELS
 from mmdet3d.models.segmentors.cylinder3d import Cylinder3D
@@ -73,7 +73,7 @@ class _P3Former(Cylinder3D):
         x, x_ins = self.extract_feat(batch_inputs_dict)
         batch_inputs_dict['features'] = x.features
         pred_offsets = self.offset_head(x_ins, batch_inputs_dict)
-        
+        validate_offset(pred_offsets, batch_inputs_dict, batch_data_samples, vis=True)
         pts_semantic_preds, pts_instance_preds = self.decode_head.predict(batch_inputs_dict, batch_data_samples)
         return self.postprocess_result(pts_semantic_preds, pts_instance_preds, batch_data_samples)
 
@@ -104,14 +104,19 @@ class _P3Former(Cylinder3D):
         return mean_loss_list
 
 def validate_offset(pred_offsets, batch_inputs_dict, batch_data_samples, vis=True):
-    # valid = batch_data_samples[0].gt_pts_seg.pts_valid
-    
-    # pts = batch_inputs_dict['points'][0].cpu().numpy()
-    # draw_point(pts, name='pcl_gt_img.png')
-    # draw_point(pts[valid], name='pcl_thing_img.png')
+    valid = batch_data_samples[0].gt_pts_seg.pts_valid
+    time = datetime.now().strftime("%Y%m%d%H%M%S")
+    pts = batch_inputs_dict['points'][0].cpu().numpy()
+    draw_point(pts, name=f'pcl_gt_img_{time}.png')
+    draw_point(pts[valid], name=f'pcl_thing_img_{time}.png')
 
-    # embedding = [offset + torch.from_numpy(xyz).cuda() for offset, xyz in zip(pred_offsets, batch_inputs_dict[0]['points'][:, :3])]
-    pass
+    embedding = [offset + xyz for offset, xyz in zip(pred_offsets, batch_inputs_dict['points'][0][:, :3])]
+    for emb in embedding:
+        with torch.no_grad():
+            shifted_points = emb.cpu().numpy()
+            draw_point(shifted_points, name=f'shifted_pointcloud_{time}.png')
+            draw_point(shifted_points[valid], name=f'shifted_thing_pointcloud_{time}.png')
+
 
 def draw_point(pcl, indices=None, name='pcl_img.png', s=1):
     # Assuming `embedding` is your point cloud and `indices` are the indices of the centroids
