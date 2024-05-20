@@ -106,6 +106,7 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
             batch_augments=batch_augments)
         self.voxel = voxel
         self.voxel_type = voxel_type
+        self.grid_shape = voxel_layer['grid_shape']
         if voxel:
             self.voxel_layer = VoxelizationByGridShape(**voxel_layer)
 
@@ -398,7 +399,7 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
             voxels = torch.cat(points, dim=0)
             coors = torch.cat(coors, dim=0)
         elif self.voxel_type == 'cylindrical':
-            voxels, coors = [], []
+            voxels, coors, grid_inds = [], [], []
             for i, (res, data_sample) in enumerate(zip(points, data_samples)):
                 rho = torch.sqrt(res[:, 0]**2 + res[:, 1]**2)
                 phi = torch.atan2(res[:, 1], res[:, 0])
@@ -428,8 +429,23 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
                                        dim=-1)
                 voxels.append(res_voxels)
                 coors.append(res_coors)
+
+                #  grid index
+                crop_range = max_bound - min_bound
+                cur_grid_size = np.array(self.grid_shape)
+                intervals = crop_range.cpu().numpy()/(cur_grid_size-1) # (size-1) could directly get index starting from 0, very convenient
+
+                if (intervals==0).any(): print("Zero interval!")
+                clipped = torch.clamp(polar_res, min=min_bound, max=max_bound)
+                grid_ind = (torch.floor((clipped-min_bound)/torch.from_numpy(intervals).cuda())).int() # point-wise grid index
+                grid_inds.append(grid_ind)
+                # grid_ind = (np.floor((np.clip(polar_res,min_bound,max_bound)-min_bound)/intervals)).astype(np.int) # point-wise grid index
+                # grid_inds.append(grid_ind)
+
+
             voxels = torch.cat(voxels, dim=0)
             coors = torch.cat(coors, dim=0)
+            # grid_inds = torch.cat(grid_inds, dim=0)s
         elif self.voxel_type == 'minkunet':
             voxels, coors = [], []
             voxel_size = points[0].new_tensor(self.voxel_layer.voxel_size)
@@ -454,6 +470,9 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
                 data_sample.voxel2point_map = voxel2point_map.long()
                 voxels.append(res_voxels)
                 coors.append(res_voxel_coors)
+            # crop_range = max_bound - min_bound
+            # cur_grid_size = self.voxel_layer.grid_size
+            # intervals = crop_range/(cur_grid_size-1)
             voxels = torch.cat(voxels, dim=0)
             coors = torch.cat(coors, dim=0)
 
@@ -462,6 +481,7 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
 
         voxel_dict['voxels'] = voxels
         voxel_dict['coors'] = coors
+        voxel_dict['grid'] = grid_inds
 
         return voxel_dict
 

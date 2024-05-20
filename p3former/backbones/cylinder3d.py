@@ -496,4 +496,4 @@ class _Asymm3DSpconv(BaseModule):
             ddcm.features = self.addBn(ddcm.features)
             ddcm.features = self.addAct(ddcm.features)
         
-        return ddcm
+        return ddcm, ddcm

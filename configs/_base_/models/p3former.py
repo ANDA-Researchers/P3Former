@@ -60,6 +60,11 @@ model = dict(
             alpha=0.25,
             loss_weight=1.0),
     ),
+    offset_head=dict(
+        type='_OffsetPredictor',
+        init_size=128,
+        embedding_dim=3),
     train_cfg=None,
     test_cfg=dict(mode='whole'),
+    use_offset=True
 )

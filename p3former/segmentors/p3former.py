@@ -12,13 +12,15 @@ class _P3Former(Cylinder3D):
                  voxel_encoder: ConfigType,
                  backbone: ConfigType,
                  decode_head: ConfigType,
+                 offset_head: ConfigType,
                  neck: OptConfigType = None,
                  auxiliary_head: OptConfigType = None,
                  loss_regularization: OptConfigType = None,
                  train_cfg: OptConfigType = None,
                  test_cfg: OptConfigType = None,
                  data_preprocessor: OptConfigType = None,
-                 init_cfg: OptMultiConfig = None) -> None:
+                 init_cfg: OptMultiConfig = None,
+                 use_offset: bool = True) -> None:
         super().__init__(voxel_encoder=voxel_encoder,
                         backbone=backbone,
                         decode_head=decode_head,
@@ -29,7 +31,9 @@ class _P3Former(Cylinder3D):
                         test_cfg=test_cfg,
                         data_preprocessor=data_preprocessor,
                         init_cfg=init_cfg)
-
+        self.use_offset = use_offset
+        if self.use_offset:
+            self.offset_head = MODELS.build(offset_head)
     def loss(self, batch_inputs_dict,batch_data_samples):
         """Calculate losses from a batch of inputs and data samples.
 
@@ -48,17 +52,24 @@ class _P3Former(Cylinder3D):
         """
 
         # extract features using backbone
-        x = self.extract_feat(batch_inputs_dict)
+        x, x_ins = self.extract_feat(batch_inputs_dict)
+        
         batch_inputs_dict['features'] = x.features
         losses = dict()
         loss_decode = self._decode_head_forward_train(batch_inputs_dict, batch_data_samples)
         losses.update(loss_decode)
-
+        if self.use_offset:
+            pred_offsets = self.offset_head(x_ins, batch_inputs_dict)
+            offset_loss = self.offset_loss(pred_offsets, batch_data_samples)
+            losses['offset_loss'] = sum(offset_loss)
+        
         return losses
 
     def predict(self, batch_inputs_dict, batch_data_samples, **kwargs):
-        x = self.extract_feat(batch_inputs_dict)
+        x, x_ins = self.extract_feat(batch_inputs_dict)
         batch_inputs_dict['features'] = x.features
+        pred_offsets = self.offset_head(x_ins, batch_inputs_dict)
+        validate_offset(pred_offsets, batch_data_samples, vis=True)
         pts_semantic_preds, pts_instance_preds = self.decode_head.predict(batch_inputs_dict, batch_data_samples)
         return self.postprocess_result(pts_semantic_preds, pts_instance_preds, batch_data_samples)
 
@@ -68,3 +79,25 @@ class _P3Former(Cylinder3D):
                 {'pred_pts_seg': PointData(**{'pts_semantic_mask': pts_semantic_preds[i],
                                                 'pts_instance_mask': pts_instance_preds[i]})})
         return batch_data_samples
+    
+    def offset_loss(self, pred_offsets, batch_data_samples):
+        loss_list_list = []
+        for i, b in enumerate(batch_data_samples):
+            valid = b.gt_pts_seg.pts_instance_mask != 0
+            gt_offsets = b.gt_pts_seg.pts_offsets
+            pt_diff = pred_offsets[i] - gt_offsets   # (N, 3)
+            pt_dist = torch.sum(torch.abs(pt_diff), dim=-1)   # (N)
+            valid = valid.view(-1).float()
+            offset_norm_loss = torch.sum(pt_dist * valid) / (torch.sum(valid) + 1e-6)
+            loss_len = len((loss_list_list,))
+            if len(loss_list_list) < loss_len:
+                loss_list_list = [[] for j in range(loss_len)]
+            for j in range(loss_len):
+                loss_list_list[j].append((offset_norm_loss,)[j])
+        mean_loss_list = []
+        for i in range(len(loss_list_list)):
+            mean_loss_list.append(torch.mean(torch.stack(loss_list_list[i])))
+        return mean_loss_list
+
+def validate_offset(pred_offsets, batch_data_samples, vis=False):
+    pass

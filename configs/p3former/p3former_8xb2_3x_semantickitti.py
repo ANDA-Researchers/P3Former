@@ -64,6 +64,7 @@ custom_imports = dict(
         'p3former.data_preprocessors.data_preprocessor',
         'p3former.decode_heads.p3former_head',
         'p3former.segmentors.p3former',
+        'p3former.center_head.center_head',
         'p3former.task_modules.samplers.mask_pseduo_sampler',
         'evaluation.metrics.panoptic_seg_metric',
         'datasets.semantickitti_dataset',
