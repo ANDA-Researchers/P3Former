@@ -171,7 +171,10 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
                                                             ins_labels=data_samples[i].gt_pts_seg.pts_instance_mask.cpu().numpy(), 
                                                             center_type='Axis_center')
                 data_samples[i].gt_pts_seg.pts_offsets = torch.from_numpy(offset).cuda()
-            
+                
+                sem = data_samples[i].gt_pts_seg.pts_instance_mask.cpu().numpy() & 0xFFFF
+                valid = np.isin(sem, list(things_ids)).reshape(-1)
+                data_samples[i].gt_pts_seg.pts_valid = valid
             
             if self.voxel:
                 voxel_dict = self.voxelize(inputs['points'], data_samples)
@@ -436,11 +439,11 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
                 intervals = crop_range.cpu().numpy()/(cur_grid_size-1) # (size-1) could directly get index starting from 0, very convenient
 
                 if (intervals==0).any(): print("Zero interval!")
-                clipped = torch.clamp(polar_res, min=min_bound, max=max_bound)
-                grid_ind = (torch.floor((clipped-min_bound)/torch.from_numpy(intervals).cuda())).int() # point-wise grid index
-                grid_inds.append(grid_ind)
-                # grid_ind = (np.floor((np.clip(polar_res,min_bound,max_bound)-min_bound)/intervals)).astype(np.int) # point-wise grid index
+                # clipped = torch.clamp(polar_res, min=min_bound, max=max_bound)
+                # grid_ind = (torch.floor((clipped-min_bound)/torch.from_numpy(intervals).cuda())).int() # point-wise grid index
                 # grid_inds.append(grid_ind)
+                grid_ind = (np.floor((np.clip(polar_res.cpu().numpy(),min_bound.cpu().numpy(),max_bound.cpu().numpy())-min_bound.cpu().numpy())/intervals)).astype(np.int32) # point-wise grid index
+                grid_inds.append(grid_ind)
 
 
             voxels = torch.cat(voxels, dim=0)
@@ -607,10 +610,10 @@ def nb_aggregate_pointwise_center_offset(offsets, xyz, ins_labels, center_type):
     # for i in range(1, ins_num):
     xyz = xyz[:, :3]
     for i in np.unique(ins_labels):
-        if ((i & 0xFFFF0000) >> 16) == 0: #TODO: change to use thing list to filter
-            continue
-        # if (i & 0xFFFF) not in things_ids:
+        # if ((i & 0xFFFF0000) >> 16) == 0: #TODO: change to use thing list to filter
         #     continue
+        if (i & 0xFFFF) not in things_ids:
+            continue
         i_indices = (ins_labels == i).reshape(-1)
         xyz_i = xyz[i_indices]
         if xyz_i.shape[0] <= 0:
