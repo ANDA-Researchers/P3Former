@@ -18,6 +18,7 @@ from mmdet3d.models.data_preprocessors.utils import multiview_img_stack_batch
 from mmdet3d.models.data_preprocessors.voxelize import VoxelizationByGridShape, dynamic_scatter_3d
 import torch_scatter
 
+things_ids = set([10, 11, 13, 15, 16, 18, 20, 30, 31, 32, 252, 253, 254, 255, 256, 257, 258, 259])
 
 @MODELS.register_module(force=True)
 class _Det3DDataPreprocessor(DetDataPreprocessor):
@@ -158,7 +159,19 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
 
         if 'points' in inputs:
             batch_inputs['points'] = inputs['points']
+            # get valid points as thing points
+            # valid = data_samples[0].gt_pts_seg.pts_instance_mask != 0
 
+            #  compute offset
+            for i, b in enumerate(batch_inputs['points']):
+                offset = np.zeros([b.shape[0], 3], dtype=np.float32)
+                offset = nb_aggregate_pointwise_center_offset(offsets=offset, 
+                                                            xyz=b.cpu().numpy(), 
+                                                            ins_labels=data_samples[i].gt_pts_seg.pts_instance_mask.cpu().numpy(), 
+                                                            center_type='Axis_center')
+                data_samples[i].gt_pts_seg.pts_offsets = torch.from_numpy(offset).cuda()
+            
+            
             if self.voxel:
                 voxel_dict = self.voxelize(inputs['points'], data_samples)
                 batch_inputs['voxels'] = voxel_dict
@@ -558,3 +571,35 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
         if return_inverse:
             outputs += [inverse_indices]
         return outputs
+
+def calc_xyz_middle(xyz):
+    return np.array([
+        (np.max(xyz[:, 0]) + np.min(xyz[:, 0])) / 2.0,
+        (np.max(xyz[:, 1]) + np.min(xyz[:, 1])) / 2.0,
+        (np.max(xyz[:, 2]) + np.min(xyz[:, 2])) / 2.0
+    ], dtype=np.float32)
+
+
+
+# @nb.jit #TODO: why jit would lead to offsets all zero?
+def nb_aggregate_pointwise_center_offset(offsets, xyz, ins_labels, center_type):
+    # ins_num = np.max(ins_labels) + 1
+    # for i in range(1, ins_num):
+    xyz = xyz[:, :3]
+    for i in np.unique(ins_labels):
+        if ((i & 0xFFFF0000) >> 16) == 0: #TODO: change to use thing list to filter
+            continue
+        # if (i & 0xFFFF) not in things_ids:
+        #     continue
+        i_indices = (ins_labels == i).reshape(-1)
+        xyz_i = xyz[i_indices]
+        if xyz_i.shape[0] <= 0:
+            continue
+        if center_type == 'Axis_center':
+            mean_xyz = calc_xyz_middle(xyz_i)
+        elif center_type == 'Mass_center':
+            mean_xyz = np.mean(xyz_i, axis=0)
+        else:
+            raise NotImplementedError
+        offsets[i_indices] = mean_xyz - xyz_i
+    return offsets
