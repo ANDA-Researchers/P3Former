@@ -66,7 +66,7 @@ class _P3Former(Cylinder3D):
             pred_offsets = self.offset_head(x_ins, batch_inputs_dict)
             offset_loss = self.offset_loss(pred_offsets, batch_data_samples)
             losses['offset_loss'] = sum(offset_loss)
-        validate_offset(pred_offsets, batch_inputs_dict, batch_data_samples, vis=True)
+        # validate_offset(pred_offsets, batch_inputs_dict, batch_data_samples, vis=True)
         return losses
 
     def predict(self, batch_inputs_dict, batch_data_samples, **kwargs):

@@ -1,4 +1,5 @@
 import torch
+import gc
 import torch.nn as nn
 import numpy as np
 from mmdet3d.registry import MODELS
@@ -22,6 +23,10 @@ class _OffsetPredictor(nn.Module):
         self.bn3 = nn.BatchNorm1d(init_size)
         self.act3 = nn.LeakyReLU()
 
+        # self.conv1 = conv3x3(self.pt_fea_dim, init_size, indice_key='offset_head_conv1')
+        # self.bn1 = nn.BatchNorm1d(init_size)
+        # self.act1 = nn.LeakyReLU()
+
         self.offset = nn.Sequential(
             nn.Linear(init_size+3, init_size, bias=True),
             nn.BatchNorm1d(init_size),
@@ -38,6 +43,9 @@ class _OffsetPredictor(nn.Module):
         fea = self.conv3(fea)
         fea.features = self.act3(self.bn3(fea.features))
 
+        # fea = self.conv1(fea)
+        # fea.features = self.act1(self.bn1(fea.features))
+
         grid_ind = batch_inputs_dict['voxels']['grid']
         xyz = batch_inputs_dict['points']
         fea = fea.dense()
@@ -49,9 +57,17 @@ class _OffsetPredictor(nn.Module):
                                        np.array(grid_ind[batch_i][:,0]), 
                                        np.array(grid_ind[batch_i][:,1]), 
                                        np.array(grid_ind[batch_i][:,2])])
-            
+        del fea
+        torch.cuda.empty_cache()
+
         pt_pred_offsets_list = []
         for batch_i, pt_ins_fea in enumerate(pt_ins_fea_list):
             pt_pred_offsets_list.append(self.offset_linear(self.offset(torch.cat([pt_ins_fea, xyz[batch_i][:,:3].cuda()],dim=1))))
+        
+        del pt_ins_fea_list
+        torch.cuda.empty_cache()
+
+        gc.collect()
+        
         return pt_pred_offsets_list
     
