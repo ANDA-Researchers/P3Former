@@ -1,8 +1,12 @@
-import numpy as np
+'''testing only'''
 import matplotlib.pyplot as plt
 from scipy.ndimage import maximum_filter
 from datetime import datetime
+'''testing only'''
+
+import numpy as np
 import torch
+import torch.nn.functional as F
 from mmdet3d.registry import MODELS
 from mmdet3d.models.segmentors.cylinder3d import Cylinder3D
 from mmdet3d.structures import PointData
@@ -66,7 +70,81 @@ class _P3Former(Cylinder3D):
             pred_offsets = self.offset_head(x_ins, batch_inputs_dict)
             offset_loss = self.offset_loss(pred_offsets, batch_data_samples)
             losses['offset_loss'] = sum(offset_loss)
+
+        # Validate offset
         # validate_offset(pred_offsets, batch_inputs_dict, batch_data_samples, vis=True)
+        for batch_i, p in enumerate(batch_inputs_dict['points']):
+            batch_inputs_dict['points'][batch_i] = p[:,:3]
+        assert len(pred_offsets[0]) == len(batch_inputs_dict['points'][0])
+
+        # Point shifting
+        embedding = [offset + xyz for offset, xyz in zip(pred_offsets, batch_inputs_dict['points'])]
+
+        # Get heatmap
+        heatmap = []
+        x_edges_list = []
+        y_edges_list = []
+        for emb in embedding:
+            shifted_points = emb.detach()
+            shifted_points = shifted_points.cpu().numpy()
+
+            # Generate 2D heatmap
+            min_val = np.min (shifted_points, axis=0)
+            max_val = np.max (shifted_points, axis=0)
+            grid_size = 0.5
+            num_bins = np.ceil((max_val - min_val) / grid_size).astype(int)[:2]
+            H, x_edges, y_edges = np.histogram2d(shifted_points[:, 0], shifted_points[:, 1], bins=num_bins)
+
+            heatmap.append(H)
+            x_edges_list.append(x_edges)
+            y_edges_list.append(y_edges)
+
+        window_size = 1
+        threshold = 5
+        heatmap_pooled = F.max_pool2d(torch.tensor(heatmap), window_size, stride=1, padding=window_size//2)
+
+        heatmap_pooled[heatmap_pooled < threshold] = 0
+
+        pcls = []
+        for i, h in enumerate(heatmap_pooled):
+            h = h.cpu().numpy()
+
+            write_img(h, name=f'heatmap_{i}_pooled.png')
+        
+            x_centers = (x_edges_list[i][:-1] + x_edges_list[i][1:]) / 2
+            y_centers = (y_edges_list[i][:-1] + y_edges_list[i][1:]) / 2
+
+            # Generate a grid of indices
+            x_indices, y_indices = np.indices(h.shape)
+
+            # Repeat each index according to the corresponding histogram value
+            x_repeat = np.repeat(x_indices, h.astype(int).flatten())
+            y_repeat = np.repeat(y_indices, h.astype(int).flatten())
+            z_repeat = np.repeat(h.flatten(), h.astype(int).flatten())
+
+            # Map the indices to the bin centers to get the point coordinates
+            pcl = np.column_stack((x_centers[x_repeat], y_centers[y_repeat], z_repeat))
+
+            pcls.append(pcl)
+
+        for batch_i, p in enumerate(batch_inputs_dict['points']):
+
+            # Nearest neighbors from p to pcls
+            from sklearn.neighbors import NearestNeighbors
+            nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(p[:,:3].cpu().numpy())
+            distances, indices = nbrs.kneighbors(pcls[batch_i][:,:3])
+            
+            
+            valid = batch_data_samples[batch_i].gt_pts_seg.pts_valid
+
+            mask = valid[indices]
+            indices = indices[mask]
+            draw_point(p.cpu().numpy(), indices, name='pcl_img.png')
+            
+        print("none")
+
+            
+
         return losses
 
     def predict(self, batch_inputs_dict, batch_data_samples, **kwargs):
