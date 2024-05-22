@@ -4,8 +4,12 @@ CONFIG=$1
 GPUS=$2
 arg3=$3
 
+CHECKPOINT=""
 if [[ $arg3 == "--checkpoint" ]]; then
     CHECKPOINT=$4
+    shift 4
+else
+    shift 2
 fi
 
 NNODES=${NNODES:-1}
@@ -24,5 +28,5 @@ python -m torch.distributed.launch \
     --master_port=$PORT \
     $(dirname "$0")/train.py \
     $CONFIG \
-    --checkpoint ${CHECKPOINT:-default_value} \
-    --launcher pytorch "${@:3}"
+    ${CHECKPOINT:+--checkpoint $CHECKPOINT} \
+    --launcher pytorch "$@"

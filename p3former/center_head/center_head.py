@@ -57,17 +57,17 @@ class _OffsetPredictor(nn.Module):
                                        np.array(grid_ind[batch_i][:,0]), 
                                        np.array(grid_ind[batch_i][:,1]), 
                                        np.array(grid_ind[batch_i][:,2])])
-        del fea
-        torch.cuda.empty_cache()
+        # del fea
+        # torch.cuda.empty_cache()
 
         pt_pred_offsets_list = []
         for batch_i, pt_ins_fea in enumerate(pt_ins_fea_list):
             pt_pred_offsets_list.append(self.offset_linear(self.offset(torch.cat([pt_ins_fea, xyz[batch_i][:,:3].cuda()],dim=1))))
         
-        del pt_ins_fea_list
-        torch.cuda.empty_cache()
+        # del pt_ins_fea_list
+        # torch.cuda.empty_cache()
 
-        gc.collect()
+        # gc.collect()
         
         return pt_pred_offsets_list
     

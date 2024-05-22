@@ -40,7 +40,7 @@ optim_wrapper = dict(
     optimizer=dict(type='AdamW', lr=lr, weight_decay=0.01))
 
 
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=36, val_interval=10)
+train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=36, val_interval=20)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 
