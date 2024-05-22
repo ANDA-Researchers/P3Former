@@ -62,7 +62,7 @@ model = dict(
     ),
     offset_head=dict(
         type='_OffsetPredictor',
-        init_size=128,
+        init_size=32,
         embedding_dim=3),
     train_cfg=None,
     test_cfg=dict(mode='whole'),
