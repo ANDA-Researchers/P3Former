@@ -134,16 +134,16 @@ class _P3Former(Cylinder3D):
             nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(p[:,:3].cpu().numpy())
             distances, indices = nbrs.kneighbors(pcls[batch_i][:,:3])
             
-            
             valid = batch_data_samples[batch_i].gt_pts_seg.pts_valid
 
             mask = valid[indices]
             indices = indices[mask]
-            draw_point(p.cpu().numpy(), indices, name='pcl_img.png')
-            
-        print("none")
 
-            
+            centers = p[:,:3].cpu().numpy()[indices]
+
+            draw_point(p.cpu().numpy(), indices, name='pcl_img.png')
+
+        print("none")
 
         return losses
 
