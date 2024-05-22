@@ -5,6 +5,11 @@ from numbers import Number
 from typing import Dict, List, Optional, Sequence, Union
 
 import numpy as np
+import matplotlib.pyplot as plt
+from scipy.ndimage import maximum_filter
+from datetime import datetime
+
+import numpy as np
 import torch
 from mmdet.models import DetDataPreprocessor
 from mmengine.model import stack_batch
@@ -175,6 +180,7 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
                 sem = data_samples[i].gt_pts_seg.pts_instance_mask.cpu().numpy() & 0xFFFF
                 valid = np.isin(sem, list(things_ids)).reshape(-1)
                 data_samples[i].gt_pts_seg.pts_valid = valid
+                # validate_offset([torch.from_numpy(offset).cuda()], batch_inputs, data_samples, vis=True)
             
             if self.voxel:
                 voxel_dict = self.voxelize(inputs['points'], data_samples)
@@ -626,3 +632,101 @@ def nb_aggregate_pointwise_center_offset(offsets, xyz, ins_labels, center_type):
             raise NotImplementedError
         offsets[i_indices] = mean_xyz - xyz_i
     return offsets
+
+# def validate_offset(pred_offsets, batch_inputs_dict, batch_data_samples, vis=True):
+#     valid = batch_data_samples[0].gt_pts_seg.pts_valid
+#     time = datetime.now().strftime("%Y%m%d%H%M%S")
+#     pts = batch_inputs_dict['points']
+#     draw_point(pts[0].cpu().numpy(), name=f'pcl_gt_img_{time}.png')
+#     draw_point(pts[0].cpu().numpy()[valid], name=f'pcl_thing_img_{time}.png')
+
+#     pts[0] = pts[0][:,:3]
+
+#     embedding = [offset + xyz for offset, xyz in zip(pred_offsets, pts)]
+#     for emb in embedding:
+#         with torch.no_grad():
+#             shifted_points = emb.cpu().numpy()
+#             draw_point(shifted_points, name=f'shifted_pointcloud_{time}.png')
+#             draw_point(shifted_points[valid], name=f'shifted_thing_pointcloud_{time}.png')
+
+
+# def draw_point(pcl, indices=None, name='pcl_img.png', s=1):
+#     # Assuming `embedding` is your point cloud and `indices` are the indices of the centroids
+#     embedding_np = pcl  # Convert to numpy array for plotting
+    
+#     # Create a new color array
+#     colors = np.full(embedding_np.shape[0], 'w')  # All points are blue
+    
+#     # Create a new size array
+#     sizes = np.full(embedding_np.shape[0], s)  # All points are size 1
+    
+#     if indices is not None:
+#         indices_np = indices.flatten()  # Flatten the indices array for indexing
+#         colors[indices_np] = 'r'  # Centroid points are red
+#         sizes[indices_np] = 10  # Centroid points are size 20
+
+#     # Create a 3D plot
+#     fig = plt.figure(figsize=(30, 30))
+#     ax = fig.add_subplot()
+
+#     # Plot the point cloud in 3D
+#     scatter = ax.scatter(embedding_np[:, 0], embedding_np[:, 1], c=colors, s=sizes)
+
+#     # Set background color to black
+#     ax.set_facecolor('black')
+#     ax.set_aspect('auto')
+#     # ax.set_axis_off()
+
+#     # Hide grid
+#     # ax.grid(False)
+
+#     # Save the plot to an image file
+#     plt.savefig(name)
+
+# def write_img(img, name='heatmap.png'):
+#     plt.imsave(name, img)
+
+# def find_peaks(heatmap, threshold):
+#     # Use maximum filter to find local maxima
+#     local_max = maximum_filter(heatmap, footprint=np.ones((3, 3)), mode='constant') == heatmap
+#     write_img(local_max, name='localmax.png')
+#     # Apply threshold to the local maxima
+#     peaks = local_max & (heatmap > threshold)
+#     return np.argwhere(peaks)
+
+# def draw_point_with(pcl, indices=None, name='pcl_img.png', s=1, pcl2=None):
+#     # Assuming `embedding` is your point cloud and `indices` are the indices of the centroids
+#     embedding_np = pcl  # Convert to numpy array for plotting
+    
+#     # Create a new color array
+#     colors = np.full(embedding_np.shape[0], 'w')  # All points are blue
+    
+#     # Create a new size array
+#     sizes = np.full(embedding_np.shape[0], s)  # All points are size 1
+    
+#     if indices is not None:
+#         indices_np = indices.flatten()  # Flatten the indices array for indexing
+#         colors[indices_np] = 'r'  # Centroid points are red
+#         sizes[indices_np] = 10  # Centroid points are size 20
+
+#     # Create a 3D plot
+#     fig = plt.figure(figsize=(30, 30))
+#     ax = fig.add_subplot()
+
+    
+
+#     # Plot the point cloud in 3D
+#     scatter = ax.scatter(embedding_np[:, 0], embedding_np[:, 1], c=colors, s=sizes)
+#     if pcl2 is not None:
+#         scatter = ax.scatter(pcl2[:, 0], pcl2[:, 1], c='r', s=s)
+
+#     # Set background color to black
+#     ax.set_facecolor('black')
+#     ax.set_aspect('auto')
+#     # ax.set_axis_off()
+
+#     # Hide grid
+#     # ax.grid(False)
+
+#     # Save the plot to an image file
+#     plt.savefig(name)

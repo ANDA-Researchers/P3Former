@@ -106,11 +106,13 @@ class _P3Former(Cylinder3D):
 def validate_offset(pred_offsets, batch_inputs_dict, batch_data_samples, vis=True):
     valid = batch_data_samples[0].gt_pts_seg.pts_valid
     time = datetime.now().strftime("%Y%m%d%H%M%S")
-    pts = batch_inputs_dict['points'][0].cpu().numpy()
-    draw_point(pts, name=f'pcl_gt_img_{time}.png')
-    draw_point(pts[valid], name=f'pcl_thing_img_{time}.png')
+    pts = batch_inputs_dict['points']
+    draw_point(pts[0].cpu().numpy(), name=f'pcl_gt_img_{time}.png')
+    draw_point(pts[0].cpu().numpy()[valid], name=f'pcl_thing_img_{time}.png')
 
-    embedding = [offset + xyz for offset, xyz in zip(pred_offsets, batch_inputs_dict['points'][0][:, :3])]
+    pts[0] = pts[0][:,:3]
+
+    embedding = [offset + xyz for offset, xyz in zip(pred_offsets, pts)]
     for emb in embedding:
         with torch.no_grad():
             shifted_points = emb.cpu().numpy()
