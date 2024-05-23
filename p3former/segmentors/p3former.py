@@ -1,6 +1,5 @@
 '''testing only'''
 import matplotlib.pyplot as plt
-from scipy.ndimage import maximum_filter
 from datetime import datetime
 '''testing only'''
 
@@ -84,14 +83,15 @@ class _P3Former(Cylinder3D):
         heatmap = []
         x_edges_list = []
         y_edges_list = []
-        for emb in embedding:
+        for i, emb in enumerate(embedding):
+            valid = batch_data_samples[i].gt_pts_seg.pts_valid
             shifted_points = emb.detach()
-            shifted_points = shifted_points.cpu().numpy()
+            shifted_points = shifted_points.cpu().numpy()[valid]
 
             # Generate 2D heatmap
-            min_val = np.min (shifted_points, axis=0)
-            max_val = np.max (shifted_points, axis=0)
-            grid_size = 0.5
+            min_val = np.min(shifted_points, axis=0)
+            max_val = np.max(shifted_points, axis=0)
+            grid_size = 0.1
             num_bins = np.ceil((max_val - min_val) / grid_size).astype(int)[:2]
             H, x_edges, y_edges = np.histogram2d(shifted_points[:, 0], shifted_points[:, 1], bins=num_bins)
 
@@ -99,12 +99,16 @@ class _P3Former(Cylinder3D):
             x_edges_list.append(x_edges)
             y_edges_list.append(y_edges)
 
-        window_size = 1
-        threshold = 5
-        heatmap_pooled = F.max_pool2d(torch.tensor(heatmap), window_size, stride=1, padding=window_size//2)
+        window_size = 5
+        # threshold = 10
+        heatmap_pooled = F.max_pool2d(torch.tensor(heatmap), window_size, stride=5, padding=window_size//2)
 
-        heatmap_pooled[heatmap_pooled < threshold] = 0
+        #  Average pool
+        heatmap_pooled = F.avg_pool2d(torch.tensor(heatmap), window_size, stride=5, padding=window_size//2)
 
+        heatmap_pooled = F.interpolate(heatmap_pooled.unsqueeze(0), 
+                                       size=(heatmap[0].shape[0], 
+                                             heatmap[0].shape[1]), mode='bilinear').squeeze(0)
         pcls = []
         for i, h in enumerate(heatmap_pooled):
             h = h.cpu().numpy()
@@ -120,29 +124,29 @@ class _P3Former(Cylinder3D):
             # Repeat each index according to the corresponding histogram value
             x_repeat = np.repeat(x_indices, h.astype(int).flatten())
             y_repeat = np.repeat(y_indices, h.astype(int).flatten())
-            z_repeat = np.repeat(h.flatten(), h.astype(int).flatten())
+            # z_repeat = np.repeat(h.flatten(), h.astype(int).flatten())
+            z_val = np.mean(h)
+            z_repeat = np.full_like(x_repeat, z_val, dtype=float)
 
             # Map the indices to the bin centers to get the point coordinates
             pcl = np.column_stack((x_centers[x_repeat], y_centers[y_repeat], z_repeat))
 
+            num_levels = 5
+            pcl = auto_quantize_point_cloud(pcl, num_levels)
+
+            pcl = np.unique(pcl, axis=0)
+
             pcls.append(pcl)
 
         for batch_i, p in enumerate(batch_inputs_dict['points']):
-
+            p = p.cpu().numpy()
             # Nearest neighbors from p to pcls
             from sklearn.neighbors import NearestNeighbors
-            nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(p[:,:3].cpu().numpy())
-            distances, indices = nbrs.kneighbors(pcls[batch_i][:,:3])
-            
-            valid = batch_data_samples[batch_i].gt_pts_seg.pts_valid
+            nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(p[:,:2])
+            distances, indices = nbrs.kneighbors(pcls[batch_i][:,:2])
 
-            mask = valid[indices]
-            indices = indices[mask]
-
-            centers = p[:,:3].cpu().numpy()[indices]
-
-            draw_point(p.cpu().numpy(), indices, name='pcl_img.png')
-            draw_point_with(p.cpu().numpy(), indices, name='pcl_img_with_centers.png', pcl2=centers)
+            draw_point(p, indices, name='pcl_img.png')
+            draw_point(p[valid], name='pcl_thing_img.png')
 
         print("none")
 
@@ -235,14 +239,6 @@ def draw_point(pcl, indices=None, name='pcl_img.png', s=1):
 def write_img(img, name='heatmap.png'):
     plt.imsave(name, img)
 
-def find_peaks(heatmap, threshold):
-    # Use maximum filter to find local maxima
-    local_max = maximum_filter(heatmap, footprint=np.ones((3, 3)), mode='constant') == heatmap
-    write_img(local_max, name='localmax.png')
-    # Apply threshold to the local maxima
-    peaks = local_max & (heatmap > threshold)
-    return np.argwhere(peaks)
-
 def draw_point_with(pcl, indices=None, name='pcl_img.png', s=1, pcl2=None):
     # Assuming `embedding` is your point cloud and `indices` are the indices of the centroids
     embedding_np = pcl  # Convert to numpy array for plotting
@@ -279,3 +275,33 @@ def draw_point_with(pcl, indices=None, name='pcl_img.png', s=1, pcl2=None):
 
     # Save the plot to an image file
     plt.savefig(name)
+
+
+def auto_quantize_point_cloud(points, num_levels):
+    """
+    Automatically quantize a point cloud based on the number of quantization levels.
+    
+    Parameters:
+    points (np.ndarray): The point cloud data as an (N, 3) array.
+    num_levels (int): The number of quantization levels per dimension.
+    
+    Returns:
+    np.ndarray: The quantized point cloud as an (N, 3) array.
+    """
+    # Determine the bounding box of the point cloud
+    min_coords = np.min(points, axis=0)
+    max_coords = np.max(points, axis=0)
+    
+    # Compute the range of the point cloud in each dimension
+    range_coords = max_coords - min_coords
+    
+    # Compute the grid size
+    grid_size = range_coords / num_levels
+    
+    # Quantize the points
+    quantized_points = np.floor((points - min_coords) / grid_size + 0.5).astype(np.int32)
+    
+    # Reconstruct the quantized points
+    quantized_points = quantized_points * grid_size + min_coords
+    
+    return quantized_points
