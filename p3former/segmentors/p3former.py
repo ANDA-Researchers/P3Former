@@ -142,6 +142,7 @@ class _P3Former(Cylinder3D):
             centers = p[:,:3].cpu().numpy()[indices]
 
             draw_point(p.cpu().numpy(), indices, name='pcl_img.png')
+            draw_point_with(p.cpu().numpy(), indices, name='pcl_img_with_centers.png', pcl2=centers)
 
         print("none")
 
@@ -254,7 +255,7 @@ def draw_point_with(pcl, indices=None, name='pcl_img.png', s=1, pcl2=None):
     
     if indices is not None:
         indices_np = indices.flatten()  # Flatten the indices array for indexing
-        colors[indices_np] = 'r'  # Centroid points are red
+        colors[indices_np] = 'b'  # Centroid points are red
         sizes[indices_np] = 10  # Centroid points are size 20
 
     # Create a 3D plot
