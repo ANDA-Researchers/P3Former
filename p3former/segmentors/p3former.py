@@ -76,6 +76,7 @@ class _P3Former(Cylinder3D):
             batch_inputs_dict['points'][batch_i] = p[:,:3]
         assert len(pred_offsets[0]) == len(batch_inputs_dict['points'][0])
 
+        # pred_offsets = [batch_data_samples[0].gt_pts_seg.pts_offsets]
         # Point shifting
         embedding = [offset + xyz for offset, xyz in zip(pred_offsets, batch_inputs_dict['points'])]
 
@@ -89,8 +90,8 @@ class _P3Former(Cylinder3D):
             shifted_points = shifted_points.cpu().numpy()[valid]
 
             # Generate 2D heatmap
-            min_val = np.min(shifted_points, axis=0)
-            max_val = np.max(shifted_points, axis=0)
+            min_val = np.min(emb.detach().cpu().numpy(), axis=0)
+            max_val = np.max(emb.detach().cpu().numpy(), axis=0)
             grid_size = 0.1
             num_bins = np.ceil((max_val - min_val) / grid_size).astype(int)[:2]
             H, x_edges, y_edges = np.histogram2d(shifted_points[:, 0], shifted_points[:, 1], bins=num_bins)
@@ -100,18 +101,46 @@ class _P3Former(Cylinder3D):
             y_edges_list.append(y_edges)
 
         window_size = 5
-        # threshold = 10
+        threshold = 1
         heatmap_pooled = F.max_pool2d(torch.tensor(heatmap), window_size, stride=5, padding=window_size//2)
-
-        #  Average pool
-        heatmap_pooled = F.avg_pool2d(torch.tensor(heatmap), window_size, stride=5, padding=window_size//2)
-
         heatmap_pooled = F.interpolate(heatmap_pooled.unsqueeze(0), 
                                        size=(heatmap[0].shape[0], 
                                              heatmap[0].shape[1]), mode='bilinear').squeeze(0)
+        
+        #  create binary mask
+        heatmap_pooled[heatmap_pooled >= threshold] = 1
+        heatmap_pooled[heatmap_pooled < threshold] = 0
+        write_img(heatmap_pooled[0], name=f'heatmap_pooled.png')
+
+        #  Find contour on heatmap_pooled
+        heatmap_pooled = heatmap_pooled.cpu().numpy()
+        #  Find contour on heatmap_pooled
+        from skimage import measure
+        contours = measure.find_contours(heatmap_pooled[0], 0.5)
+        
+        # DRAW CONTOUR ON HEATMAP AND SAVE IMAGE, DO NOT SHOW
+        fig, ax = plt.subplots()
+        for contour in contours:
+            ax.plot(contour[:, 1], contour[:, 0], linewidth=2, color='black')  # Assuming contours is a list of (x, y) points
+        ax.axis('image')
+        ax.set_xticks([])
+        ax.set_yticks([])
+        plt.savefig('contour.png')
+        plt.close(fig)  # Close the figure to prevent displaying it
+
+
+        # In each contour, get the center pixel, other pixels map to 0
+        new_heatmap = np.zeros_like(heatmap_pooled)
+        for contour in contours:
+            center = np.mean(contour, axis=0)
+            center = np.round(center).astype(int)
+            new_heatmap[0][center[0], center[1]] = 1
+  
+
+
         pcls = []
-        for i, h in enumerate(heatmap_pooled):
-            h = h.cpu().numpy()
+        for i, h in enumerate(new_heatmap):
+            h = h
 
             write_img(h, name=f'heatmap_{i}_pooled.png')
         
@@ -131,22 +160,22 @@ class _P3Former(Cylinder3D):
             # Map the indices to the bin centers to get the point coordinates
             pcl = np.column_stack((x_centers[x_repeat], y_centers[y_repeat], z_repeat))
 
-            num_levels = 5
-            pcl = auto_quantize_point_cloud(pcl, num_levels)
+            # num_levels = 5
+            # pcl = auto_quantize_point_cloud(pcl, num_levels)
 
-            pcl = np.unique(pcl, axis=0)
+            # pcl = np.unique(pcl, axis=0)
 
             pcls.append(pcl)
 
         for batch_i, p in enumerate(batch_inputs_dict['points']):
             p = p.cpu().numpy()
-            # Nearest neighbors from p to pcls
-            from sklearn.neighbors import NearestNeighbors
-            nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(p[:,:2])
-            distances, indices = nbrs.kneighbors(pcls[batch_i][:,:2])
+            # # Nearest neighbors from p to pcls
+            # from sklearn.neighbors import NearestNeighbors
+            # nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(p[:,:2][valid])
+            # distances, indices = nbrs.kneighbors(pcls[batch_i][:,:2])
 
-            draw_point(p, indices, name='pcl_img.png')
-            draw_point(p[valid], name='pcl_thing_img.png')
+            # draw_point(p, indices, name='pcl_img.png')
+            draw_point_with(p[valid], name='pcl_thing_img.png', pcl2=pcls[batch_i], s2=20)
 
         print("none")
 
@@ -239,7 +268,7 @@ def draw_point(pcl, indices=None, name='pcl_img.png', s=1):
 def write_img(img, name='heatmap.png'):
     plt.imsave(name, img)
 
-def draw_point_with(pcl, indices=None, name='pcl_img.png', s=1, pcl2=None):
+def draw_point_with(pcl, indices=None, name='pcl_img.png', s=1, pcl2=None, s2=1):
     # Assuming `embedding` is your point cloud and `indices` are the indices of the centroids
     embedding_np = pcl  # Convert to numpy array for plotting
     
@@ -263,7 +292,7 @@ def draw_point_with(pcl, indices=None, name='pcl_img.png', s=1, pcl2=None):
     # Plot the point cloud in 3D
     scatter = ax.scatter(embedding_np[:, 0], embedding_np[:, 1], c=colors, s=sizes)
     if pcl2 is not None:
-        scatter = ax.scatter(pcl2[:, 0], pcl2[:, 1], c='r', s=s)
+        scatter = ax.scatter(pcl2[:, 0], pcl2[:, 1], c='r', s=s2)
 
     # Set background color to black
     ax.set_facecolor('black')
