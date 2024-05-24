@@ -61,10 +61,13 @@ class _P3Former(Cylinder3D):
         # extract features using backbone
         x, x_ins = self.extract_feat(batch_inputs_dict)
         
+        # Save features
         batch_inputs_dict['features'] = x.features
+
+        #  Loss
         losses = dict()
-        loss_decode = self._decode_head_forward_train(batch_inputs_dict, batch_data_samples)
-        losses.update(loss_decode)
+
+        # Offset head forward and calculate loss
         if self.use_offset:
             pred_offsets = self.offset_head(x_ins, batch_inputs_dict)
             offset_loss = self.offset_loss(pred_offsets, batch_data_samples)
@@ -76,116 +79,28 @@ class _P3Former(Cylinder3D):
             batch_inputs_dict['points'][batch_i] = p[:,:3]
         assert len(pred_offsets[0]) == len(batch_inputs_dict['points'][0])
 
-        # pred_offsets = [batch_data_samples[0].gt_pts_seg.pts_offsets]
         # Point shifting
         embedding = [offset + xyz for offset, xyz in zip(pred_offsets, batch_inputs_dict['points'])]
 
-        # Get heatmap
-        heatmap = []
-        x_edges_list = []
-        y_edges_list = []
-        for i, emb in enumerate(embedding):
-            valid = batch_data_samples[i].gt_pts_seg.pts_valid
-            shifted_points = emb.detach()
-            shifted_points = shifted_points.cpu().numpy()[valid]
+        batch_inputs_dict['embedding'] = embedding
 
-            # Generate 2D heatmap
-            min_val = np.min(emb.detach().cpu().numpy(), axis=0)
-            max_val = np.max(emb.detach().cpu().numpy(), axis=0)
-            grid_size = 0.1
-            num_bins = np.ceil((max_val - min_val) / grid_size).astype(int)[:2]
-            H, x_edges, y_edges = np.histogram2d(shifted_points[:, 0], shifted_points[:, 1], bins=num_bins)
-
-            heatmap.append(H)
-            x_edges_list.append(x_edges)
-            y_edges_list.append(y_edges)
-
-        window_size = 5
-        threshold = 1
-        heatmap_pooled = F.max_pool2d(torch.tensor(heatmap), window_size, stride=5, padding=window_size//2)
-        heatmap_pooled = F.interpolate(heatmap_pooled.unsqueeze(0), 
-                                       size=(heatmap[0].shape[0], 
-                                             heatmap[0].shape[1]), mode='bilinear').squeeze(0)
-        
-        #  create binary mask
-        heatmap_pooled[heatmap_pooled >= threshold] = 1
-        heatmap_pooled[heatmap_pooled < threshold] = 0
-        write_img(heatmap_pooled[0], name=f'heatmap_pooled.png')
-
-        #  Find contour on heatmap_pooled
-        heatmap_pooled = heatmap_pooled.cpu().numpy()
-        #  Find contour on heatmap_pooled
-        from skimage import measure
-        contours = measure.find_contours(heatmap_pooled[0], 0.5)
-        
-        # DRAW CONTOUR ON HEATMAP AND SAVE IMAGE, DO NOT SHOW
-        fig, ax = plt.subplots()
-        for contour in contours:
-            ax.plot(contour[:, 1], contour[:, 0], linewidth=2, color='black')  # Assuming contours is a list of (x, y) points
-        ax.axis('image')
-        ax.set_xticks([])
-        ax.set_yticks([])
-        plt.savefig('contour.png')
-        plt.close(fig)  # Close the figure to prevent displaying it
-
-
-        # In each contour, get the center pixel, other pixels map to 0
-        new_heatmap = np.zeros_like(heatmap_pooled)
-        for contour in contours:
-            center = np.mean(contour, axis=0)
-            center = np.round(center).astype(int)
-            new_heatmap[0][center[0], center[1]] = 1
-  
-
-
-        pcls = []
-        for i, h in enumerate(new_heatmap):
-            h = h
-
-            write_img(h, name=f'heatmap_{i}_pooled.png')
-        
-            x_centers = (x_edges_list[i][:-1] + x_edges_list[i][1:]) / 2
-            y_centers = (y_edges_list[i][:-1] + y_edges_list[i][1:]) / 2
-
-            # Generate a grid of indices
-            x_indices, y_indices = np.indices(h.shape)
-
-            # Repeat each index according to the corresponding histogram value
-            x_repeat = np.repeat(x_indices, h.astype(int).flatten())
-            y_repeat = np.repeat(y_indices, h.astype(int).flatten())
-            # z_repeat = np.repeat(h.flatten(), h.astype(int).flatten())
-            z_val = np.mean(h)
-            z_repeat = np.full_like(x_repeat, z_val, dtype=float)
-
-            # Map the indices to the bin centers to get the point coordinates
-            pcl = np.column_stack((x_centers[x_repeat], y_centers[y_repeat], z_repeat))
-
-            # num_levels = 5
-            # pcl = auto_quantize_point_cloud(pcl, num_levels)
-
-            # pcl = np.unique(pcl, axis=0)
-
-            pcls.append(pcl)
-
-        for batch_i, p in enumerate(batch_inputs_dict['points']):
-            p = p.cpu().numpy()
-            # # Nearest neighbors from p to pcls
-            # from sklearn.neighbors import NearestNeighbors
-            # nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(p[:,:2][valid])
-            # distances, indices = nbrs.kneighbors(pcls[batch_i][:,:2])
-
-            # draw_point(p, indices, name='pcl_img.png')
-            draw_point_with(p[valid], name='pcl_thing_img.png', pcl2=pcls[batch_i], s2=20)
-
-        print("none")
-
+        # Decode head forward and calculate loss
+        loss_decode = self._decode_head_forward_train(batch_inputs_dict, batch_data_samples)
+        losses.update(loss_decode)
         return losses
 
     def predict(self, batch_inputs_dict, batch_data_samples, **kwargs):
         x, x_ins = self.extract_feat(batch_inputs_dict)
         batch_inputs_dict['features'] = x.features
-        pred_offsets = self.offset_head(x_ins, batch_inputs_dict)
-        validate_offset(pred_offsets, batch_inputs_dict, batch_data_samples, vis=True)
+        if self.use_offset:
+            pred_offsets = self.offset_head(x_ins, batch_inputs_dict)
+            for batch_i, p in enumerate(batch_inputs_dict['points']):
+                batch_inputs_dict['points'][batch_i] = p[:,:3]
+            assert len(pred_offsets[0]) == len(batch_inputs_dict['points'][0])
+            embedding = [offset + xyz for offset, xyz in zip(pred_offsets, batch_inputs_dict['points'])]
+            batch_inputs_dict['embedding'] = embedding
+
+            # validate_offset(pred_offsets, batch_inputs_dict, batch_data_samples, vis=True)
         pts_semantic_preds, pts_instance_preds = self.decode_head.predict(batch_inputs_dict, batch_data_samples)
         return self.postprocess_result(pts_semantic_preds, pts_instance_preds, batch_data_samples)
 
@@ -214,6 +129,86 @@ class _P3Former(Cylinder3D):
         for i in range(len(loss_list_list)):
             mean_loss_list.append(torch.mean(torch.stack(loss_list_list[i])))
         return mean_loss_list
+
+    def center_generation(self, batch_inputs_dict, batch_data_samples, embedding, is_train=True):
+        # Get heatmap
+        heatmap = []
+        x_edges_list = []
+        y_edges_list = []
+        for i, emb in enumerate(embedding):
+            if is_train:
+                valid = batch_data_samples[i].gt_pts_seg.pts_valid
+            else:
+                print("Not implemented vlaid for testing")
+                raise NotImplementedError
+            shifted_points = emb.detach()
+            shifted_points = shifted_points.cpu().numpy()[valid]
+
+            # Generate 2D heatmap
+            min_val = np.min(emb.detach().cpu().numpy(), axis=0)
+            max_val = np.max(emb.detach().cpu().numpy(), axis=0)
+            grid_size = 0.1
+            num_bins = np.ceil((max_val - min_val) / grid_size).astype(int)[:2]
+            H, x_edges, y_edges = np.histogram2d(shifted_points[:, 0], shifted_points[:, 1], bins=num_bins)
+
+            heatmap.append(H)
+            x_edges_list.append(x_edges)
+            y_edges_list.append(y_edges)
+
+        window_size = 5
+        threshold = 1
+        heatmap_pooled = F.max_pool2d(torch.tensor(heatmap), window_size, stride=5, padding=window_size//2)
+        heatmap_pooled = F.interpolate(heatmap_pooled.unsqueeze(0), 
+                                       size=(heatmap[0].shape[0], 
+                                             heatmap[0].shape[1]), mode='bilinear').squeeze(0)
+        
+        #  create binary mask
+        heatmap_pooled[heatmap_pooled >= threshold] = 1
+        heatmap_pooled[heatmap_pooled < threshold] = 0
+
+        #  Find contour on heatmap_pooled
+        heatmap_pooled = heatmap_pooled.cpu().numpy()
+
+        #  Find contour on heatmap_pooled
+        from skimage import measure
+        contours = measure.find_contours(heatmap_pooled[0], 0.5)
+        
+        # In each contour, get the center pixel, other pixels map to 0
+        new_heatmap = np.zeros_like(heatmap_pooled)
+        for contour in contours:
+            center = np.mean(contour, axis=0)
+            center = np.round(center).astype(int)
+            new_heatmap[0][center[0], center[1]] = 1
+  
+        pcls = []
+        for i, h in enumerate(new_heatmap):
+            x_centers = (x_edges_list[i][:-1] + x_edges_list[i][1:]) / 2
+            y_centers = (y_edges_list[i][:-1] + y_edges_list[i][1:]) / 2
+
+            # Generate a grid of indices
+            x_indices, y_indices = np.indices(h.shape)
+
+            # Repeat each index according to the corresponding histogram value
+            x_repeat = np.repeat(x_indices, h.astype(int).flatten())
+            y_repeat = np.repeat(y_indices, h.astype(int).flatten())
+            z_val = np.mean(h)
+            z_repeat = np.full_like(x_repeat, z_val, dtype=float)
+
+            # Map the indices to the bin centers to get the point coordinates
+            pcl = np.column_stack((x_centers[x_repeat], y_centers[y_repeat], z_repeat))
+
+            pcls.append(pcl)
+        return torch.tensor(pcls).cuda()
+
+
+
+
+
+
+
+
+
+
 
 def validate_offset(pred_offsets, batch_inputs_dict, batch_data_samples, vis=True):
     valid = batch_data_samples[0].gt_pts_seg.pts_valid
