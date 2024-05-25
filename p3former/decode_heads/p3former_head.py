@@ -363,6 +363,9 @@ class _P3FormerHead(nn.Module):
                     stuff_queries = sem_queries[b][self.stuff_class]
                     queries.append(stuff_queries)
             ins_queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
+            self.num_queries = []
+            for batch_i in range(ins_queries.shape[0]):
+                self.num_queries.append(128)
             for i in range(len(ins_queries)):
                 queries[i] = torch.cat([queries[i], ins_queries[i]], dim=0)
 
