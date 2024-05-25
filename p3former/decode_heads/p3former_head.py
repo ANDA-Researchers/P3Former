@@ -564,7 +564,7 @@ class _P3FormerHead(nn.Module):
 
         sampling_results = []
         for b in range(len(mask_preds[0])):
-            thing_masks_pred_detach = mask_preds[0][b][:self.num_queries[0],:].detach()
+            thing_masks_pred_detach = mask_preds[0][b][:self.num_queries[b],:].detach()
             sampled_gt_instances = InstanceData(
                 labels=gt_thing_classes[b], masks=gt_thing_masks[b])
             sampled_pred_instances = InstanceData(masks=thing_masks_pred_detach)
