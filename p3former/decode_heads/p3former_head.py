@@ -539,6 +539,7 @@ class _P3FormerHead(nn.Module):
                 sem_preds, seg_label, ignore_index=self.ignore_index)
             losses['loss_lovasz'] = self.loss_lovasz(
                 sem_preds, seg_label, ignore_index=self.ignore_index)
+        losses['loss_ce'] += 0 * sum(p.sum() for p in self.parameters())
         return losses
 
     def bipartite_matching(self, class_preds, mask_preds, pos_mask_preds, batch_data_samples):
