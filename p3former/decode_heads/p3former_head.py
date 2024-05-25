@@ -400,17 +400,16 @@ class _P3FormerHead(nn.Module):
             flag = not any(pcl.shape[0] == 0 for pcl in center_pcls)
 
             if self.use_center_queries and flag==True:
+                # Initialize num_queries only once outside the loop
+                self.num_queries = [0] * batch_size
+
                 for i in range(batch_size):
-                    #  Init num queries
-                    self.num_queries = []
+                    # Num queries
+                    self.num_queries[i] = center_pcls[i].shape[0]
 
-                    for i in range(batch_size):
-                        # Num queries
-                        self.num_queries.append(center_pcls[i].shape[0])
-
-                        #  Center Features
-                        queries_s = self.center_embed(center_pcls[i])
-                        queries.append(queries_s)
+                    # Center Features
+                    queries_s = self.center_embed(center_pcls[i])
+                    queries[i] = torch.cat([queries_s, stuff_queries], dim=0)
             
             # Else use random queries
             else:
@@ -974,7 +973,7 @@ class _P3FormerHead(nn.Module):
 
             window_size = 5
             threshold = 0.5
-            heatmap_pooled = F.max_pool2d(torch.tensor(heatmap), window_size, stride=5, padding=window_size//2)
+            heatmap_pooled = F.max_pool2d(torch.tensor(np.array(heatmap)), window_size, stride=5, padding=window_size//2)
             heatmap_pooled = F.interpolate(heatmap_pooled.unsqueeze(0), 
                                         size=(heatmap[0].shape[0], 
                                                 heatmap[0].shape[1]), mode='bilinear').squeeze(0)
