@@ -11,7 +11,7 @@
             "program": "test.py",
             "console": "integratedTerminal",
             "env": {"CUDA_HOME": "$CONDA_PREFIX", "CUDA_VISIBLE_DEVICES": "0"},
-            "args": ["configs/p3former/p3former_8xb2_3x_semantickitti.py", "epoch_1.pth"]
+            "args": ["configs/p3former/p3former_8xb2_3x_semantickitti.py", "epoch_13.pth"]
         },
         {
             "name": "train",
@@ -20,7 +20,7 @@
             "program": "train.py",
             "console": "integratedTerminal",
             "env": {"CUDA_HOME": "$CONDA_PREFIX", "CUDA_VISIBLE_DEVICES": "0"},
-            "args": ["configs/p3former/p3former_8xb2_3x_semantickitti.py", "--checkpoint", "semantickitti_val_62.6.pth"],
+            "args": ["configs/p3former/p3former_8xb2_3x_semantickitti.py", "--checkpoint", "epoch_13.pth"],
             "justMyCode": false
         }
     ]

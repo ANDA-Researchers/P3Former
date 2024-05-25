@@ -124,58 +124,58 @@ train_pipeline = [
         dataset_type='semantickitti',
         backend_args=backend_args),
     dict(type='PointSegClassMapping', ),
-    dict(
-        type='RandomChoice',
-        transforms=[
-            [
-                dict(
-                    type='_LaserMix',
-                    num_areas=[3, 4, 5, 6],
-                    pitch_angles=[-25, 3],
-                    pre_transform=[
-                        dict(
-                            type='LoadPointsFromFile',
-                            coord_type='LIDAR',
-                            load_dim=4,
-                            use_dim=4),
-                        dict(
-                            type='_LoadAnnotations3D',
-                            with_bbox_3d=False,
-                            with_label_3d=False,
-                            with_panoptic_3d=True,
-                            seg_3d_dtype='np.int32',
-                            seg_offset=2**16,
-                            dataset_type='semantickitti'),
-                        dict(type='PointSegClassMapping')
-                    ],
-                    prob=0.5)
-            ],
-            [
-                dict(
-                    type='_PolarMix',
-                    instance_classes=[0, 1, 2, 3, 4, 5, 6, 7],
-                    swap_ratio=0.5,
-                    rotate_paste_ratio=1.0,
-                    pre_transform=[
-                        dict(
-                            type='LoadPointsFromFile',
-                            coord_type='LIDAR',
-                            load_dim=4,
-                            use_dim=4),
-                        dict(
-                            type='_LoadAnnotations3D',
-                            with_bbox_3d=False,
-                            with_label_3d=False,
-                            with_panoptic_3d=True,  
-                            seg_3d_dtype='np.int32',
-                            seg_offset=2**16,
-                            dataset_type='semantickitti'),
-                        dict(type='PointSegClassMapping')
-                    ],
-                    prob=0.5)
-            ],
-        ],
-        prob=[0.2, 0.8]),
+    # dict(
+    #     type='RandomChoice',
+    #     transforms=[
+    #         [
+    #             dict(
+    #                 type='_LaserMix',
+    #                 num_areas=[3, 4, 5, 6],
+    #                 pitch_angles=[-25, 3],
+    #                 pre_transform=[
+    #                     dict(
+    #                         type='LoadPointsFromFile',
+    #                         coord_type='LIDAR',
+    #                         load_dim=4,
+    #                         use_dim=4),
+    #                     dict(
+    #                         type='_LoadAnnotations3D',
+    #                         with_bbox_3d=False,
+    #                         with_label_3d=False,
+    #                         with_panoptic_3d=True,
+    #                         seg_3d_dtype='np.int32',
+    #                         seg_offset=2**16,
+    #                         dataset_type='semantickitti'),
+    #                     dict(type='PointSegClassMapping')
+    #                 ],
+    #                 prob=0.5)
+    #         ],
+    #         [
+    #             dict(
+    #                 type='_PolarMix',
+    #                 instance_classes=[0, 1, 2, 3, 4, 5, 6, 7],
+    #                 swap_ratio=0.5,
+    #                 rotate_paste_ratio=1.0,
+    #                 pre_transform=[
+    #                     dict(
+    #                         type='LoadPointsFromFile',
+    #                         coord_type='LIDAR',
+    #                         load_dim=4,
+    #                         use_dim=4),
+    #                     dict(
+    #                         type='_LoadAnnotations3D',
+    #                         with_bbox_3d=False,
+    #                         with_label_3d=False,
+    #                         with_panoptic_3d=True,  
+    #                         seg_3d_dtype='np.int32',
+    #                         seg_offset=2**16,
+    #                         dataset_type='semantickitti'),
+    #                     dict(type='PointSegClassMapping')
+    #                 ],
+    #                 prob=0.5)
+    #         ],
+    #     ],
+    #     prob=[0.2, 0.8]),
     dict(
         type='RandomFlip3D',
         sync_2d=False,
