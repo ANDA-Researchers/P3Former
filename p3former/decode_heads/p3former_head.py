@@ -314,6 +314,11 @@ class _P3FormerHead(nn.Module):
         self.use_center_queries = use_center_queries
         if self.use_center_queries:
             self.center_embed = nn.Linear(3, embed_dims)
+            self.center_norm = build_norm_layer(dict(type='LN'), embed_dims)[1]
+            self.center_feat_conv = nn.Sequential(
+                nn.Linear(embed_dims, embed_dims, bias=False),
+                build_norm_layer(dict(type='LN'), embed_dims)[1],
+                build_activation_layer(dict(type='GELU')))
     def init_inputs(self,
                     features,
                     voxel_coors,
@@ -345,7 +350,8 @@ class _P3FormerHead(nn.Module):
                     self.num_queries.append(center_pcls[i].shape[0])
 
                     #  Center Features
-                    queries_s = self.center_embed(center_pcls[i])
+                    queries_s = self.center_norm(self.center_embed(center_pcls[i].float()))
+                    queries_s = self.center_feat_conv(queries_s)
                     queries.append(queries_s)
             # Else use random queries
             else:
@@ -408,7 +414,8 @@ class _P3FormerHead(nn.Module):
                     self.num_queries[i] = center_pcls[i].shape[0]
 
                     # Center Features
-                    queries_s = self.center_embed(center_pcls[i])
+                    queries_s = self.center_norm(self.center_embed(center_pcls[i].float()))
+                    queries_s = self.center_feat_conv(queries_s)
                     queries[i] = torch.cat([queries_s, stuff_queries], dim=0)
             
             # Else use random queries
