@@ -14,7 +14,7 @@ from mmengine.structures import InstanceData
 
 from mmcv.ops import SubMConv3d
 
-from p3former.segmentors.p3former import draw_point_with, write_img
+from debug_utils.debug_utils import draw_point_with, write_img
 
 @MODELS.register_module()
 class _Masked_Focal_Attention(nn.Module):
@@ -321,28 +321,43 @@ class _P3FormerHead(nn.Module):
                     embedding, 
                     batch_data_samples, 
                     is_train):
-        
+        #  Train
         if is_train:
+            # Center generation from shifted embeddings (shifted points)
             center_pcls = self.center_generation(batch_data_samples, embedding, is_train=is_train)
+
             # Flag = True if center_pcls is None else False
             flag = not any(pcl.shape[0] == 0 for pcl in center_pcls)
+
+            #  pe features and mpe
             pe_features, mpe = self.mpe(features, voxel_coors, batch_size)
+
+            # Init queries
             queries = []
+
+            # If center_pcls is not None, use center queries
             if self.use_center_queries and flag==True:
+                #  Init num queries
                 self.num_queries = []
+
                 for i in range(batch_size):
+                    # Num queries
                     self.num_queries.append(center_pcls[i].shape[0])
+
+                    #  Center Features
                     queries_s = self.center_embed(center_pcls[i])
                     queries.append(queries_s)
+            # Else use random queries
             else:
                 queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
+                
+                #  Init queries set to 128
                 self.num_queries = []
                 for batch_i in range(queries.shape[0]):
                     self.num_queries.append(128)
                 queries = [queries[i] for i in range(queries.shape[0])]
-                
-                
-
+            
+            #  Semantic predictions for stuff queries
             sem_preds = []
             if self.use_sem_loss:
                 sem_queries = self.sem_queries.weight.clone().squeeze(-1).squeeze(-1).repeat(1,1,batch_size).permute(2,0,1)
@@ -351,23 +366,60 @@ class _P3FormerHead(nn.Module):
                     sem_preds.append(sem_pred)
                     stuff_queries = sem_queries[b][self.stuff_class]
                     queries[b] = torch.cat([queries[b], stuff_queries], dim=0)
+        #  Test
         else:
+            #  pe features and mpe
             pe_features, mpe = self.mpe(features, voxel_coors, batch_size)
+
+            # Init queries
             sem_preds = []
             queries = []
             if self.use_sem_loss:
                 sem_queries = self.sem_queries.weight.clone().squeeze(-1).squeeze(-1).repeat(1,1,batch_size).permute(2,0,1)
                 for b in range(len(pe_features)):
                     sem_pred = torch.einsum("nc,vc->vn", sem_queries[b], pe_features[b])
+                    
+                    # Get thing valid points
+                    sem_pred_label = sem_pred.sigmoid().argmax(dim=1)
+                    valids = []
+                    coors = torch.cat(voxel_coors)
+                    for batch_idx in range(len(batch_data_samples)):
+                        semantic_sample = sem_pred_label[coors[:, 0] == batch_idx]
+                        point2voxel_map = batch_data_samples[
+                            batch_idx].gt_pts_seg.point2voxel_map.long()
+                        point_semantic_sample = semantic_sample[point2voxel_map]
+                        valid = np.isin(point_semantic_sample.cpu().numpy(), self.thing_class[0])
+                        valids.append(valid)
+
                     sem_preds.append(sem_pred)
                     stuff_queries = sem_queries[b][self.stuff_class]
                     queries.append(stuff_queries)
-            ins_queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
-            self.num_queries = []
-            for batch_i in range(ins_queries.shape[0]):
-                self.num_queries.append(128)
-            for i in range(len(ins_queries)):
-                queries[i] = torch.cat([queries[i], ins_queries[i]], dim=0)
+
+            center_pcls = self.center_generation(batch_data_samples, embedding, is_train=is_train, valid=valids)
+            # Flag = True if center_pcls is None else False
+            flag = not any(pcl.shape[0] == 0 for pcl in center_pcls)
+
+            if self.use_center_queries and flag==True:
+                for i in range(batch_size):
+                    #  Init num queries
+                    self.num_queries = []
+
+                    for i in range(batch_size):
+                        # Num queries
+                        self.num_queries.append(center_pcls[i].shape[0])
+
+                        #  Center Features
+                        queries_s = self.center_embed(center_pcls[i])
+                        queries.append(queries_s)
+            
+            # Else use random queries
+            else:
+                ins_queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
+                self.num_queries = []
+                for batch_i in range(ins_queries.shape[0]):
+                    self.num_queries.append(128)
+                for i in range(len(ins_queries)):
+                    queries[i] = torch.cat([queries[i], ins_queries[i]], dim=0)
 
         return queries, pe_features, mpe, sem_preds
 
@@ -896,7 +948,7 @@ class _P3FormerHead(nn.Module):
         return (semantic_preds, instance_ids)
 
 
-    def center_generation(self, batch_data_samples, embedding, is_train=True):
+    def center_generation(self, batch_data_samples, embedding, is_train=True, valid=None):
             # Get heatmap
             heatmap = []
             x_edges_list = []
@@ -904,9 +956,8 @@ class _P3FormerHead(nn.Module):
             for i, emb in enumerate(embedding):
                 if is_train:
                     valid = batch_data_samples[i].gt_pts_seg.pts_valid
-                else:
-                    print("Not implemented vlaid for testing")
-                    raise NotImplementedError
+                elif is_train is False and valid is not None:
+                    valid = valid[i]
                 shifted_points = emb.detach()
                 shifted_points = shifted_points.cpu().numpy()[valid]
 
