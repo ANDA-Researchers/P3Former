@@ -52,7 +52,7 @@ class _P3Former(Cylinder3D):
         """
 
         # extract features using backbone
-        x, x_ins = self.extract_feat(batch_inputs_dict)
+        x = self.extract_feat(batch_inputs_dict)
         
         # Save features
         batch_inputs_dict['features'] = x.features
@@ -62,10 +62,10 @@ class _P3Former(Cylinder3D):
 
         # Offset head forward and calculate loss
         if self.use_offset:
-            pred_offsets = self.offset_head(x_ins, batch_inputs_dict)
+            pred_offsets = self.offset_head(x, batch_inputs_dict)
             offset_loss = self.offset_loss(pred_offsets, batch_data_samples)
             losses['offset_loss'] = sum(offset_loss)
-
+        del x
         for batch_i, p in enumerate(batch_inputs_dict['points']):
             batch_inputs_dict['points'][batch_i] = p[:,:3]
         assert len(pred_offsets[0]) == len(batch_inputs_dict['points'][0])
@@ -78,13 +78,15 @@ class _P3Former(Cylinder3D):
         # Decode head forward and calculate loss
         loss_decode = self._decode_head_forward_train(batch_inputs_dict, batch_data_samples)
         losses.update(loss_decode)
+        del embedding
+        torch.cuda.empty_cache()
         return losses
 
     def predict(self, batch_inputs_dict, batch_data_samples, **kwargs):
-        x, x_ins = self.extract_feat(batch_inputs_dict)
+        x = self.extract_feat(batch_inputs_dict)
         batch_inputs_dict['features'] = x.features
         if self.use_offset:
-            pred_offsets = self.offset_head(x_ins, batch_inputs_dict)
+            pred_offsets = self.offset_head(x, batch_inputs_dict)
             for batch_i, p in enumerate(batch_inputs_dict['points']):
                 batch_inputs_dict['points'][batch_i] = p[:,:3]
             assert len(pred_offsets[0]) == len(batch_inputs_dict['points'][0])

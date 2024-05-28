@@ -313,10 +313,10 @@ class _P3FormerHead(nn.Module):
                 self.fc_coor_mask.append(MLP(mask_channels))
         self.use_center_queries = use_center_queries
         if self.use_center_queries:
-            self.center_embed = nn.Linear(3, embed_dims)
-            self.center_norm = build_norm_layer(dict(type='LN'), embed_dims)[1]
+            # self.center_embed = nn.Linear(3, embed_dims)
+            # self.center_norm = build_norm_layer(dict(type='LN'), embed_dims)[1]
             self.center_feat_conv = nn.Sequential(
-                nn.Linear(embed_dims, embed_dims, bias=False),
+                nn.Linear(3, embed_dims, bias=False),
                 build_norm_layer(dict(type='LN'), embed_dims)[1],
                 build_activation_layer(dict(type='GELU')))
     def init_inputs(self,
@@ -350,18 +350,19 @@ class _P3FormerHead(nn.Module):
                     self.num_queries.append(center_pcls[i].shape[0])
 
                     #  Center Features
-                    queries_s = self.center_norm(self.center_embed(center_pcls[i].float()))
-                    queries_s = self.center_feat_conv(queries_s)
+                    # queries_s = self.center_norm(self.center_embed(center_pcls[i].float()))
+                    queries_s = self.center_feat_conv(center_pcls[i].float())
                     queries.append(queries_s)
             # Else use random queries
             else:
-                queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
+                # queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
                 
                 #  Init queries set to 128
                 self.num_queries = []
-                for batch_i in range(queries.shape[0]):
-                    self.num_queries.append(128)
-                queries = [queries[i] for i in range(queries.shape[0])]
+                for batch_i in range(batch_size):
+                    self.num_queries.append(0)
+                # queries = [queries[i] for i in range(queries.shape[0])]
+                queries = [torch.empty(0, 256, dtype=features[0].dtype, device=features[0].device) for i in range(batch_size)]
             
             #  Semantic predictions for stuff queries
             sem_preds = []
@@ -414,19 +415,23 @@ class _P3FormerHead(nn.Module):
                     self.num_queries[i] = center_pcls[i].shape[0]
 
                     # Center Features
-                    queries_s = self.center_norm(self.center_embed(center_pcls[i].float()))
-                    queries_s = self.center_feat_conv(queries_s)
+                    # queries_s = self.center_norm(self.center_embed(center_pcls[i].float()))
+                    queries_s = self.center_feat_conv(center_pcls[i].float())
                     queries[i] = torch.cat([queries_s, stuff_queries], dim=0)
             
             # Else use random queries
             else:
-                ins_queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
+                # ins_queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
                 self.num_queries = []
-                for batch_i in range(ins_queries.shape[0]):
-                    self.num_queries.append(128)
+                for batch_i in range(batch_size):
+                    self.num_queries.append(0)
+                # for i in range(len(ins_queries)):
+                #     queries[i] = torch.cat([queries[i], ins_queries[i]], dim=0)
+                ins_queries = [torch.empty(0, 256, dtype=features[0].dtype, device=features[0].device) for i in range(batch_size)]
                 for i in range(len(ins_queries)):
                     queries[i] = torch.cat([queries[i], ins_queries[i]], dim=0)
-
+        del center_pcls
+        # torch.cuda.empty_cache()
         return queries, pe_features, mpe, sem_preds
 
     def mpe(self, features, voxel_coors, batch_size):
@@ -526,6 +531,13 @@ class _P3FormerHead(nn.Module):
             class_preds_buffer.append(class_preds)
             mask_preds_buffer.append(mask_preds)
             pos_mask_preds_buffer.append(pos_mask_preds)
+        del pos_mask_preds
+        del mask_preds
+        del class_preds
+        del features
+        del queries
+        del mpe
+        
         return class_preds_buffer, mask_preds_buffer, pos_mask_preds_buffer, sem_preds
 
     def loss(self, batch_inputs, batch_data_samples, train_cfg):
@@ -535,6 +547,13 @@ class _P3FormerHead(nn.Module):
         for i in range(self.num_decoder_layers+1):
             losses.update(self.loss_single_layer(class_preds_buffer[i], mask_preds_buffer[i], pos_mask_preds_buffer[i],
                                                 cls_targets_buffer[i], mask_targets_buffer[i], label_weights_buffer[i], i))
+        del cls_targets_buffer
+        del mask_targets_buffer
+        del label_weights_buffer
+        del class_preds_buffer
+        del mask_preds_buffer
+        del pos_mask_preds_buffer
+
         if self.use_sem_loss:
             gt_semantic_segs = [
                 data_sample.gt_pts_seg.voxel_semantic_mask
@@ -546,11 +565,17 @@ class _P3FormerHead(nn.Module):
                 sem_preds, seg_label, ignore_index=self.ignore_index)
             losses['loss_lovasz'] = self.loss_lovasz(
                 sem_preds, seg_label, ignore_index=self.ignore_index)
-        losses['loss_ce'] += 0 * sum(p.sum() for p in self.parameters())
+        # losses['loss_ce'] += 0 * sum(p.sum() for p in self.parameters())
+        del sem_preds
+        del gt_semantic_segs
+        del seg_label
         return losses
 
     def bipartite_matching(self, class_preds, mask_preds, pos_mask_preds, batch_data_samples):
         gt_classes, gt_masks = self.generate_mask_class_target(batch_data_samples)
+
+        gt_classes = [gt_classes[i].to('cuda:1') for i in range(len(gt_classes))]
+        gt_masks = [gt_masks[i].to('cuda:1') for i in range(len(gt_masks))]
 
         gt_thing_classes = []
         gt_thing_masks = []
@@ -571,7 +596,7 @@ class _P3FormerHead(nn.Module):
 
         sampling_results = []
         for b in range(len(mask_preds[0])):
-            thing_masks_pred_detach = mask_preds[0][b][:self.num_queries[b],:].detach()
+            thing_masks_pred_detach = mask_preds[0][b][:self.num_queries[b],:].detach().to('cuda:1')
             sampled_gt_instances = InstanceData(
                 labels=gt_thing_classes[b], masks=gt_thing_masks[b])
             sampled_pred_instances = InstanceData(masks=thing_masks_pred_detach)
@@ -594,11 +619,11 @@ class _P3FormerHead(nn.Module):
             sampling_results = []
             for b in range(len(mask_preds[0])):
                 if class_preds[layer] is not None:
-                    thing_class_pred_detach = class_preds[layer][b][:self.num_queries[b],:].detach()
+                    thing_class_pred_detach = class_preds[layer][b][:self.num_queries[b],:].detach().to('cuda:1')
                 else:
                     # for layer 1, we don't have class_preds from layer 0, so we use class_preds from layer 1 for matching
-                    thing_class_pred_detach = class_preds[layer+1][b][:self.num_queries[b],:].detach()
-                thing_masks_pred_detach = thing_masks_pred_detach = mask_preds[layer][b][:self.num_queries[b],:].detach()
+                    thing_class_pred_detach = class_preds[layer+1][b][:self.num_queries[b],:].detach().to('cuda:1')
+                thing_masks_pred_detach = thing_masks_pred_detach = mask_preds[layer][b][:self.num_queries[b],:].detach().to('cuda:1')
                 sampled_gt_instances = InstanceData(
                     labels=gt_thing_classes[b], masks=gt_thing_masks[b])
                 sampled_pred_instances = InstanceData(
@@ -616,6 +641,13 @@ class _P3FormerHead(nn.Module):
             cls_targets_buffer.append(cls_targets)
             mask_targets_buffer.append(mask_targets)
             label_weights_buffer.append(label_weights)
+
+        del cls_targets
+        del mask_targets
+        del label_weights
+        del sampling_results
+        del gt_stuff_masks
+        del gt_stuff_classes
 
         return cls_targets_buffer, mask_targets_buffer, label_weights_buffer
 
@@ -637,9 +669,9 @@ class _P3FormerHead(nn.Module):
 
             losses[f'loss_cls_{layer}'] = self.loss_cls(
                 class_preds,
-                class_targets,
-                label_weights,
-                avg_factor=avg_factor,
+                class_targets.to('cuda:0'),
+                label_weights.to('cuda:0'),
+                avg_factor=avg_factor.to('cuda:0'),
                 reduction_override=reduction_override)
 
         # mask loss
@@ -652,7 +684,7 @@ class _P3FormerHead(nn.Module):
             if len(mp) > 0:
                 valid_bs += 1
                 loss_mask += self.loss_mask(
-                    mp.reshape(-1, 1), (1 - mt).long().reshape(
+                    mp.reshape(-1, 1), (1 - mt).to('cuda:0').long().reshape(
                         -1))  # (1 - mt) for binary focal loss
         if valid_bs > 0:
             losses[f'loss_mask_{layer}'] = loss_mask / valid_bs
@@ -667,7 +699,7 @@ class _P3FormerHead(nn.Module):
             mt = mtarget[bool_pos_inds_split[mask_idx]]
             if len(mp) > 0:
                 valid_bs += 1
-                loss_dice += self.loss_dice(mp, mt)
+                loss_dice += self.loss_dice(mp, mt.to('cuda:0'))
 
         if valid_bs > 0:
             losses[f'loss_dice_{layer}'] = loss_dice / valid_bs
@@ -683,7 +715,7 @@ class _P3FormerHead(nn.Module):
                 mt = mtarget[bool_pos_inds_split[mask_idx]]
                 if len(mp) > 0:
                     valid_bs += 1
-                    loss_dice_pos += self.loss_dice(mp, mt) * self.pa_seg_weight
+                    loss_dice_pos += self.loss_dice(mp, mt.to('cuda:0')) * self.pa_seg_weight
 
             if valid_bs > 0:
                 losses[f'loss_dice_pos_{layer}'] = loss_dice_pos / valid_bs
@@ -784,13 +816,13 @@ class _P3FormerHead(nn.Module):
             mask_targets = torch.cat([mask_targets, sem_targets])
             mask_weights = torch.cat([mask_weights, sem_weights])
 
-        target_dict_assign = dict()
-        target_dict_assign['labels'] = labels
-        target_dict_assign['masks'] = mask_targets
+        # target_dict_assign = dict()
+        # target_dict_assign['labels'] = labels
+        # target_dict_assign['masks'] = mask_targets
 
-        weight_dict_assign = dict()
-        weight_dict_assign['labels'] = label_weights
-        weight_dict_assign['masks'] = mask_weights
+        # weight_dict_assign = dict()
+        # weight_dict_assign['labels'] = label_weights
+        # weight_dict_assign['masks'] = mask_weights
 
         return labels, mask_targets, label_weights, mask_weights
 
