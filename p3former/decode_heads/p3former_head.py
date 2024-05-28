@@ -354,15 +354,18 @@ class _P3FormerHead(nn.Module):
                     queries_s = self.center_feat_conv(center_pcls[i].float())
                     queries.append(queries_s)
             # Else use random queries
-            else:
-                # queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
-                
-                #  Init queries set to 128
+            elif self.use_center_queries and flag==False:
                 self.num_queries = []
                 for batch_i in range(batch_size):
                     self.num_queries.append(0)
-                # queries = [queries[i] for i in range(queries.shape[0])]
                 queries = [torch.empty(0, 256, dtype=features[0].dtype, device=features[0].device) for i in range(batch_size)]
+            
+            else:
+                queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
+                self.num_queries = []
+                for batch_i in range(queries.shape[0]):
+                    self.num_queries.append(128)
+                queries = [queries[i] for i in range(queries.shape[0])]
             
             #  Semantic predictions for stuff queries
             sem_preds = []
@@ -374,7 +377,7 @@ class _P3FormerHead(nn.Module):
                     stuff_queries = sem_queries[b][self.stuff_class]
                     queries[b] = torch.cat([queries[b], stuff_queries], dim=0)
         #  Test
-        else:
+        elif is_train==False:
             #  pe features and mpe
             pe_features, mpe = self.mpe(features, voxel_coors, batch_size)
 
@@ -403,6 +406,7 @@ class _P3FormerHead(nn.Module):
                     queries.append(stuff_queries)
 
             center_pcls = self.center_generation(batch_data_samples, embedding, is_train=is_train, valid=valids)
+
             # Flag = True if center_pcls is None else False
             flag = not any(pcl.shape[0] == 0 for pcl in center_pcls)
 
@@ -415,21 +419,28 @@ class _P3FormerHead(nn.Module):
                     self.num_queries[i] = center_pcls[i].shape[0]
 
                     # Center Features
-                    # queries_s = self.center_norm(self.center_embed(center_pcls[i].float()))
                     queries_s = self.center_feat_conv(center_pcls[i].float())
                     queries[i] = torch.cat([queries_s, stuff_queries], dim=0)
             
             # Else use random queries
-            else:
-                # ins_queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
+            elif self.use_center_queries and flag==False:
                 self.num_queries = []
                 for batch_i in range(batch_size):
                     self.num_queries.append(0)
-                # for i in range(len(ins_queries)):
-                #     queries[i] = torch.cat([queries[i], ins_queries[i]], dim=0)
                 ins_queries = [torch.empty(0, 256, dtype=features[0].dtype, device=features[0].device) for i in range(batch_size)]
                 for i in range(len(ins_queries)):
                     queries[i] = torch.cat([queries[i], ins_queries[i]], dim=0)
+
+            else:
+                ins_queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
+                self.num_queries = []
+                for batch_i in range(ins_queries.shape[0]):
+                    self.num_queries.append(128)
+                for i in range(len(ins_queries)):
+                    queries[i] = torch.cat([queries[i], ins_queries[i]], dim=0)
+        else:
+            raise NotImplementedError
+        
         del center_pcls
         # torch.cuda.empty_cache()
         return queries, pe_features, mpe, sem_preds
@@ -531,6 +542,7 @@ class _P3FormerHead(nn.Module):
             class_preds_buffer.append(class_preds)
             mask_preds_buffer.append(mask_preds)
             pos_mask_preds_buffer.append(pos_mask_preds)
+
         del pos_mask_preds
         del mask_preds
         del class_preds
