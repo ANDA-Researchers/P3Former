@@ -1065,5 +1065,5 @@ class _P3FormerHead(nn.Module):
                 # Map the indices to the bin centers to get the point coordinates
                 pcl = np.column_stack((x_centers[x_repeat], y_centers[y_repeat], z_repeat))
 
-                pcls.append(pcl)
-            return torch.tensor(pcls).cuda().float()
+                pcls.append(torch.from_numpy(pcl).cuda().float())
+            return pcls
