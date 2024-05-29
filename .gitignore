@@ -1,5 +1,5 @@
-*.log
 *.pth
 *.whl
 __pycache__/
 data/
+work_dirs/
