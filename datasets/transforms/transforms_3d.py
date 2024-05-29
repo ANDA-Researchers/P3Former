@@ -20,6 +20,8 @@ from mmdet3d.structures.ops import box_np_ops
 from mmdet3d.structures.points import BasePoints
 from mmdet3d.datasets.transforms.data_augment_utils import noise_per_object_v3_
 
+from debug_utils.debug_utils import draw_point_with, write_img
+
 
 @TRANSFORMS.register_module(force=True)
 class _PolarMix(BaseTransform):
@@ -150,13 +152,24 @@ class _PolarMix(BaseTransform):
                 np.random.random() * np.pi * 2 / 3,
                 (np.random.random() + 1) * np.pi * 2 / 3
             ]
-            for angle in angle_list:
+            for i, angle in enumerate(angle_list):
                 new_points = instance_points.clone()
                 new_points.rotate(angle)
                 copy_points.append(new_points)
                 copy_pts_semantic_mask.append(instance_pts_semantic_mask)
                 if mix_panoptic:
-                    copy_pts_instance_mask.append(instance_pts_instance_mask)
+                    if i == 0:
+                        #  clone instance mask
+                        new_instance_mask = instance_pts_instance_mask.copy()
+                        new_instance_mask += (100<<16) # not overlap id
+                        copy_pts_instance_mask.append(new_instance_mask)
+                    elif i == 1:
+                        #  clone instance mask
+                        new_instance_mask = instance_pts_instance_mask.copy()
+                        new_instance_mask += (1000<<16) # not overlap id
+                        copy_pts_instance_mask.append(new_instance_mask)
+                    else:
+                        raise NotImplementedError
             copy_points = instance_points.cat(copy_points)
             copy_pts_semantic_mask = np.concatenate(
                 copy_pts_semantic_mask, axis=0)

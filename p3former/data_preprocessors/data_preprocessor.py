@@ -18,6 +18,8 @@ from mmdet3d.models.data_preprocessors.utils import multiview_img_stack_batch
 from mmdet3d.models.data_preprocessors.voxelize import VoxelizationByGridShape, dynamic_scatter_3d
 import torch_scatter
 
+from debug_utils.debug_utils import draw_point_with, write_img
+
 things_ids = set([10, 11, 13, 15, 16, 18, 20, 30, 31, 32, 252, 253, 254, 255, 256, 257, 258, 259])
 
 @MODELS.register_module(force=True)
@@ -625,4 +627,5 @@ def nb_aggregate_pointwise_center_offset(offsets, xyz, ins_labels, center_type):
         else:
             raise NotImplementedError
         offsets[i_indices] = mean_xyz - xyz_i
+
     return offsets
