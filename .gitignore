@@ -1,5 +1,6 @@
 *.pth
 *.whl
+.vscode/
 __pycache__/
 data/
 work_dirs/
