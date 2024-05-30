@@ -338,6 +338,7 @@ class _P3FormerHead(nn.Module):
         # queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
         # queries = [queries[i] for i in range(queries.shape[0])]
         min_cluster_size = 10
+        num_points = 80_000
         hdb = HDBSCAN(min_cluster_size, n_jobs=-1)
         queries = []
 
@@ -357,6 +358,10 @@ class _P3FormerHead(nn.Module):
                 if foreground_mask.sum() >= min_cluster_size:
                     thing_cat_coors = cat_coors[b][foreground_mask]
                     thing_features = features[b][foreground_mask]
+                    if thing_cat_coors.size(0) > num_points:
+                        idx = torch.randperm(thing_cat_coors.size(0))[:num_points]
+                        thing_cat_coors = thing_cat_coors[idx]
+                        thing_features = thing_features[idx]
                     cluster_labels = (
                         torch.from_numpy(hdb.fit_predict(thing_cat_coors.cpu().numpy()))
                         .to(thing_cat_coors.device)
