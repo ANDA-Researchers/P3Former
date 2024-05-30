@@ -56,7 +56,7 @@ param_scheduler = [
 
 train_dataloader = dict(batch_size=2, )
 
-default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=5))
+default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=1))
 
 custom_imports = dict(
     imports=[
