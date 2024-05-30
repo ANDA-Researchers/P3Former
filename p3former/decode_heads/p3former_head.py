@@ -12,6 +12,9 @@ from mmengine.structures import InstanceData
 
 from mmcv.ops import SubMConv3d
 
+import torch_scatter
+from sklearn.cluster import HDBSCAN
+
 @MODELS.register_module()
 class _Masked_Focal_Attention(nn.Module):
     def __init__(self,
@@ -216,8 +219,8 @@ class _P3FormerHead(nn.Module):
                  point_cloud_range=[]):
         super().__init__()
 
-        self.queries = SubMConv3d(embed_dims, num_queries, indice_key="logit", 
-                                    kernel_size=1, stride=1, padding=0, bias=False)
+        # self.queries = SubMConv3d(embed_dims, num_queries, indice_key="logit", 
+        #                             kernel_size=1, stride=1, padding=0, bias=False)
         self.num_classes = num_classes
         self.ignore_index = ignore_index
         self.mask_score_thr = mask_score_thr
@@ -311,10 +314,32 @@ class _P3FormerHead(nn.Module):
                     features,
                     voxel_coors,
                     batch_size):
+        
+        normed_polar_coors = [
+            voxel_coor[:, 1:] / voxel_coor.new_tensor(self.grid_size)[None, :].float()
+            for voxel_coor in voxel_coors
+        ]
+        
+        cat_coors = []
+        for idx in range(len(normed_polar_coors)):
+            normed_polar_coor = normed_polar_coors[idx].clone()
+            polar_coor = normed_polar_coor.new_zeros(normed_polar_coor.shape)
+            for i in range(3):
+                polar_coor[:, i] = normed_polar_coor[:, i]*(
+                                    self.point_cloud_range[i+3] -
+                                    self.point_cloud_range[i]) + \
+                                    self.point_cloud_range[i]
+            x = polar_coor[:, 0] * torch.cos(polar_coor[:, 1])
+            y = polar_coor[:, 0] * torch.sin(polar_coor[:, 1])
+            cat_coor = torch.stack([x, y, polar_coor[:, 2]], 1)
+            cat_coors.append(cat_coor)
 
         pe_features, mpe = self.mpe(features, voxel_coors, batch_size)
-        queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
-        queries = [queries[i] for i in range(queries.shape[0])]
+        # queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
+        # queries = [queries[i] for i in range(queries.shape[0])]
+        min_cluster_size = 10
+        hdb = HDBSCAN(min_cluster_size, n_jobs=-1)
+        queries = []
 
         sem_preds = []
         if self.use_sem_loss:
@@ -323,8 +348,27 @@ class _P3FormerHead(nn.Module):
                 sem_pred = torch.einsum("nc,vc->vn", sem_queries[b], pe_features[b])
                 sem_preds.append(sem_pred)
                 stuff_queries = sem_queries[b][self.stuff_class]
-                queries[b] = torch.cat([queries[b], stuff_queries], dim=0)
-
+                # queries[b] = torch.cat([queries[b], stuff_queries], dim=0)
+                
+                foreground_mask = torch.isin(
+                    sem_pred.argmax(dim=1),
+                    torch.tensor(self.thing_class, device=sem_pred.device),
+                )
+                if foreground_mask.sum() >= min_cluster_size:
+                    thing_cat_coors = cat_coors[b][foreground_mask]
+                    thing_features = features[b][foreground_mask]
+                    cluster_labels = (
+                        torch.from_numpy(hdb.fit_predict(thing_cat_coors.cpu().numpy()))
+                        .to(thing_cat_coors.device)
+                    )
+                    valid_idx = cluster_labels != -1
+                    centroid_features = torch_scatter.scatter_mean(
+                        thing_features[valid_idx], cluster_labels[valid_idx], dim=0
+                    )
+                    queries.append(torch.cat([centroid_features, stuff_queries], dim=0))
+                else:
+                    queries.append(stuff_queries)
+                    
         return queries, pe_features, mpe, sem_preds
 
     def mpe(self, features, voxel_coors, batch_size):
@@ -466,7 +510,7 @@ class _P3FormerHead(nn.Module):
 
         sampling_results = []
         for b in range(len(mask_preds[0])):
-            thing_masks_pred_detach = mask_preds[0][b][:self.num_queries,:].detach()
+            thing_masks_pred_detach = mask_preds[0][b][:-self.num_stuff_classes:].detach()
             sampled_gt_instances = InstanceData(
                 labels=gt_thing_classes[b], masks=gt_thing_masks[b])
             sampled_pred_instances = InstanceData(masks=thing_masks_pred_detach)
@@ -489,11 +533,11 @@ class _P3FormerHead(nn.Module):
             sampling_results = []
             for b in range(len(mask_preds[0])):
                 if class_preds[layer] is not None:
-                    thing_class_pred_detach = class_preds[layer][b][:self.num_queries,:].detach()
+                    thing_class_pred_detach = class_preds[layer][b][:-self.num_stuff_classes,:].detach()
                 else:
                     # for layer 1, we don't have class_preds from layer 0, so we use class_preds from layer 1 for matching
-                    thing_class_pred_detach = class_preds[layer+1][b][:self.num_queries,:].detach()
-                thing_masks_pred_detach = thing_masks_pred_detach = mask_preds[layer][b][:self.num_queries,:].detach()
+                    thing_class_pred_detach = class_preds[layer+1][b][:-self.num_stuff_classes,:].detach()
+                thing_masks_pred_detach = thing_masks_pred_detach = mask_preds[layer][b][:-self.num_stuff_classes,:].detach()
                 sampled_gt_instances = InstanceData(
                     labels=gt_thing_classes[b], masks=gt_thing_masks[b])
                 sampled_pred_instances = InstanceData(
@@ -518,11 +562,19 @@ class _P3FormerHead(nn.Module):
         batch_size = len(mask_preds)
         losses = dict()
 
+        # class_targets = torch.cat(class_targets, 0)
+        # pos_inds = (class_targets != self.ignore_index) & (
+        #     class_targets < self.num_classes)
+        # bool_pos_inds = pos_inds.type(torch.bool)
+        # bool_pos_inds_split = bool_pos_inds.reshape(batch_size, -1)
+        bool_pos_inds_split = []
+        for class_target in class_targets:
+            pos_inds = (class_target != self.ignore_index) & (
+                class_target < self.num_classes)
+            bool_pos_inds = pos_inds.type(torch.bool)
+            bool_pos_inds_split.append(bool_pos_inds)
+            
         class_targets = torch.cat(class_targets, 0)
-        pos_inds = (class_targets != self.ignore_index) & (
-            class_targets < self.num_classes)
-        bool_pos_inds = pos_inds.type(torch.bool)
-        bool_pos_inds_split = bool_pos_inds.reshape(batch_size, -1)
 
         if class_preds is not None:
             class_preds = torch.cat(class_preds, 0)  # [B*N]
@@ -798,12 +850,12 @@ class _P3FormerHead(nn.Module):
             class_pred = class_preds[i]
             mask_pred = mask_preds[i]
 
-            scores = class_pred[:self.num_queries][:, self.thing_class]
+            scores = class_pred[:-self.num_stuff_classes][:, self.thing_class]
             thing_scores, thing_labels = scores.sigmoid().max(dim=1)
             thing_scores *= 2
             thing_labels += self.thing_class[0]
             stuff_scores = class_pred[
-                self.num_queries:][:, self.stuff_class].diag().sigmoid()
+                -self.num_stuff_classes:][:, self.stuff_class].diag().sigmoid()
             stuff_labels = torch.tensor(self.stuff_class)
             stuff_labels = stuff_labels.to(thing_labels.device)
 
