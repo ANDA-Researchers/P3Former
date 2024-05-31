@@ -338,7 +338,8 @@ class _P3FormerHead(nn.Module):
         # queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
         # queries = [queries[i] for i in range(queries.shape[0])]
         min_cluster_size = 10
-        num_points = 80_000
+        max_num_points = 80_000
+        max_num_clusters = 100
         hdb = HDBSCAN(min_cluster_size, n_jobs=-1)
         queries = []
 
@@ -358,14 +359,26 @@ class _P3FormerHead(nn.Module):
                 if foreground_mask.sum() >= min_cluster_size:
                     thing_cat_coors = cat_coors[b][foreground_mask]
                     thing_features = features[b][foreground_mask]
-                    if thing_cat_coors.size(0) > num_points:
-                        idx = torch.randperm(thing_cat_coors.size(0))[:num_points]
+                    
+                    if thing_cat_coors.size(0) > max_num_points:
+                        idx = torch.randperm(thing_cat_coors.size(0))[:max_num_points]
                         thing_cat_coors = thing_cat_coors[idx]
                         thing_features = thing_features[idx]
+                        
                     cluster_labels = (
                         torch.from_numpy(hdb.fit_predict(thing_cat_coors.cpu().numpy()))
                         .to(thing_cat_coors.device)
                     )
+                    
+                    unique_clusters, point_counts = cluster_labels.unique(return_counts=True)
+                    valid_idx = unique_clusters != -1
+                    point_counts = point_counts[valid_idx]
+                    unique_clusters = unique_clusters[valid_idx]
+                    if unique_clusters.size(0) > max_num_clusters:
+                        idx = point_counts.topk(max_num_clusters).indices
+                        unique_clusters = unique_clusters[idx]
+                        cluster_labels[torch.isin(cluster_labels, unique_clusters, invert=True)] = -1
+                        
                     valid_idx = cluster_labels != -1
                     centroid_features = torch_scatter.scatter_mean(
                         thing_features[valid_idx], cluster_labels[valid_idx], dim=0
