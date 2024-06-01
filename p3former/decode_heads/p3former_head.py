@@ -216,11 +216,15 @@ class _P3FormerHead(nn.Module):
                  iou_thr=0.8,
                  mask_score_thr=0.5,
                  grid_size=[480, 360, 32],
-                 point_cloud_range=[]):
+                 point_cloud_range=[],
+                 use_centroid=False):
         super().__init__()
 
-        # self.queries = SubMConv3d(embed_dims, num_queries, indice_key="logit", 
-        #                             kernel_size=1, stride=1, padding=0, bias=False)
+        if not use_centroid:
+            self.queries = SubMConv3d(embed_dims, num_queries, indice_key="logit", 
+                                        kernel_size=1, stride=1, padding=0, bias=False)
+        
+        self.use_centroid = use_centroid
         self.num_classes = num_classes
         self.ignore_index = ignore_index
         self.mask_score_thr = mask_score_thr
@@ -314,80 +318,88 @@ class _P3FormerHead(nn.Module):
                     features,
                     voxel_coors,
                     batch_size):
-        
-        normed_polar_coors = [
-            voxel_coor[:, 1:] / voxel_coor.new_tensor(self.grid_size)[None, :].float()
-            for voxel_coor in voxel_coors
-        ]
-        
-        cat_coors = []
-        for idx in range(len(normed_polar_coors)):
-            normed_polar_coor = normed_polar_coors[idx].clone()
-            polar_coor = normed_polar_coor.new_zeros(normed_polar_coor.shape)
-            for i in range(3):
-                polar_coor[:, i] = normed_polar_coor[:, i]*(
-                                    self.point_cloud_range[i+3] -
-                                    self.point_cloud_range[i]) + \
-                                    self.point_cloud_range[i]
-            x = polar_coor[:, 0] * torch.cos(polar_coor[:, 1])
-            y = polar_coor[:, 0] * torch.sin(polar_coor[:, 1])
-            cat_coor = torch.stack([x, y, polar_coor[:, 2]], 1)
-            cat_coors.append(cat_coor)
 
         pe_features, mpe = self.mpe(features, voxel_coors, batch_size)
-        # queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
-        # queries = [queries[i] for i in range(queries.shape[0])]
-        min_cluster_size = 10
-        max_num_points = 80_000
-        max_num_clusters = 100
-        hdb = HDBSCAN(min_cluster_size, n_jobs=-1)
-        queries = []
-
+        
+        if not self.use_centroid:
+            queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
+        else:
+            normed_polar_coors = [
+                voxel_coor[:, 1:] / voxel_coor.new_tensor(self.grid_size)[None, :].float()
+                for voxel_coor in voxel_coors
+            ]
+            
+            cat_coors = []
+            for idx in range(len(normed_polar_coors)):
+                normed_polar_coor = normed_polar_coors[idx].clone()
+                polar_coor = normed_polar_coor.new_zeros(normed_polar_coor.shape)
+                for i in range(3):
+                    polar_coor[:, i] = normed_polar_coor[:, i]*(
+                                        self.point_cloud_range[i+3] -
+                                        self.point_cloud_range[i]) + \
+                                        self.point_cloud_range[i]
+                x = polar_coor[:, 0] * torch.cos(polar_coor[:, 1])
+                y = polar_coor[:, 0] * torch.sin(polar_coor[:, 1])
+                cat_coor = torch.stack([x, y, polar_coor[:, 2]], 1)
+                cat_coors.append(cat_coor)
+                    
+                min_cluster_size = 10
+                hdb = HDBSCAN(min_cluster_size, n_jobs=-1)
+                max_num_points = 80_000
+                max_num_clusters = self.num_queries
+            
+        queries_buffer = []
         sem_preds = []
+        
         if self.use_sem_loss:
             sem_queries = self.sem_queries.weight.clone().squeeze(-1).squeeze(-1).repeat(1,1,batch_size).permute(2,0,1)
             for b in range(len(pe_features)):
                 sem_pred = torch.einsum("nc,vc->vn", sem_queries[b], pe_features[b])
                 sem_preds.append(sem_pred)
                 stuff_queries = sem_queries[b][self.stuff_class]
-                # queries[b] = torch.cat([queries[b], stuff_queries], dim=0)
+                
+                if not self.use_centroid:
+                    queries_buffer.append(torch.cat([queries[b], stuff_queries], dim=0))
+                    continue
                 
                 foreground_mask = torch.isin(
                     sem_pred.argmax(dim=1),
                     torch.tensor(self.thing_class, device=sem_pred.device),
                 )
-                if foreground_mask.sum() >= min_cluster_size:
-                    thing_cat_coors = cat_coors[b][foreground_mask]
-                    thing_features = features[b][foreground_mask]
+                if foreground_mask.sum() < min_cluster_size:
+                    queries_buffer.append(stuff_queries)
+                    continue
                     
-                    if thing_cat_coors.size(0) > max_num_points:
-                        idx = torch.randperm(thing_cat_coors.size(0))[:max_num_points]
-                        thing_cat_coors = thing_cat_coors[idx]
-                        thing_features = thing_features[idx]
-                        
-                    cluster_labels = (
-                        torch.from_numpy(hdb.fit_predict(thing_cat_coors.cpu().numpy()))
-                        .to(thing_cat_coors.device)
-                    )
+                thing_cat_coors = cat_coors[b][foreground_mask]
+                thing_features = pe_features[b][foreground_mask]
+                
+                if thing_cat_coors.size(dim=0) > max_num_points:
+                    idx = torch.randperm(thing_cat_coors.size(0))[:max_num_points]
+                    thing_cat_coors = thing_cat_coors[idx]
+                    thing_features = thing_features[idx]
                     
-                    unique_clusters, point_counts = cluster_labels.unique(return_counts=True)
-                    valid_idx = unique_clusters != -1
-                    point_counts = point_counts[valid_idx]
-                    unique_clusters = unique_clusters[valid_idx]
-                    if unique_clusters.size(0) > max_num_clusters:
-                        idx = point_counts.topk(max_num_clusters).indices
-                        unique_clusters = unique_clusters[idx]
-                        cluster_labels[torch.isin(cluster_labels, unique_clusters, invert=True)] = -1
-                        
-                    valid_idx = cluster_labels != -1
-                    centroid_features = torch_scatter.scatter_mean(
-                        thing_features[valid_idx], cluster_labels[valid_idx], dim=0
-                    )
-                    queries.append(torch.cat([centroid_features, stuff_queries], dim=0))
-                else:
-                    queries.append(stuff_queries)
+                cluster_labels = (
+                    torch.from_numpy(hdb.fit_predict(thing_cat_coors.cpu().numpy()))
+                    .to(thing_cat_coors.device)
+                )
+                
+                unique_clusters, point_counts = cluster_labels.unique(return_counts=True)
+                valid_idx = unique_clusters != -1
+                point_counts = point_counts[valid_idx]
+                unique_clusters = unique_clusters[valid_idx]
+                if unique_clusters.size(0) > max_num_clusters:
+                    idx = point_counts.topk(max_num_clusters).indices
+                    unique_clusters = unique_clusters[idx]
+                    cluster_labels[torch.isin(cluster_labels, unique_clusters, invert=True)] = -1
                     
-        return queries, pe_features, mpe, sem_preds
+                valid_idx = cluster_labels != -1
+                centroid_features = torch_scatter.scatter_mean(
+                    thing_features[valid_idx], cluster_labels[valid_idx], dim=0
+                )
+                
+                queries_buffer.append(torch.cat([centroid_features, stuff_queries], dim=0))
+                    
+        return queries_buffer, pe_features, mpe, sem_preds
 
     def mpe(self, features, voxel_coors, batch_size):
         """Encode features with sparse indices."""
