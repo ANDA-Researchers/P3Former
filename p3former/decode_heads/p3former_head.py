@@ -344,9 +344,9 @@ class _P3FormerHead(nn.Module):
                 cat_coors.append(cat_coor)
                     
                 min_cluster_size = 10
-                hdb = HDBSCAN(min_cluster_size, n_jobs=-1)
                 max_num_points = 80_000
                 max_num_clusters = self.num_queries
+                hdb = HDBSCAN(min_cluster_size, n_jobs=-1)
             
         queries_buffer = []
         sem_preds = []
