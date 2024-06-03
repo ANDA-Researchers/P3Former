@@ -153,7 +153,7 @@ train_pipeline = [
             [
                 dict(
                     type='_PolarMix',
-                    instance_classes=[0, 1, 2, 3, 4, 5, 6, 7],
+                    instance_classes=[2, 3, 4, 5, 6, 7, 8],
                     swap_ratio=0.5,
                     rotate_paste_ratio=1,
                     pre_transform=[

@@ -65,20 +65,19 @@ class _P3Former(Cylinder3D):
             pred_offsets = self.offset_head(x, batch_inputs_dict)
             offset_loss = self.offset_loss(pred_offsets, batch_data_samples)
             losses['offset_loss'] = sum(offset_loss)
-        del x
-        for batch_i, p in enumerate(batch_inputs_dict['points']):
-            batch_inputs_dict['points'][batch_i] = p[:,:3]
-        assert len(pred_offsets[0]) == len(batch_inputs_dict['points'][0])
+            for batch_i, p in enumerate(batch_inputs_dict['points']):
+                batch_inputs_dict['points'][batch_i] = p[:,:3]
+            assert len(pred_offsets[0]) == len(batch_inputs_dict['points'][0])
 
-        # Point shifting
-        embedding = [offset + xyz for offset, xyz in zip(pred_offsets, batch_inputs_dict['points'])]
+            # Point shifting
+            embedding = [offset + xyz for offset, xyz in zip(pred_offsets, batch_inputs_dict['points'])]
 
-        batch_inputs_dict['embedding'] = embedding
+            batch_inputs_dict['embedding'] = embedding
 
         # Decode head forward and calculate loss
         loss_decode = self._decode_head_forward_train(batch_inputs_dict, batch_data_samples)
         losses.update(loss_decode)
-        del embedding
+        # del embedding
         # torch.cuda.empty_cache()
         return losses
 

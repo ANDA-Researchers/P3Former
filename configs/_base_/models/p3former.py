@@ -66,5 +66,5 @@ model = dict(
         embedding_dim=3),
     train_cfg=None,
     test_cfg=dict(mode='whole'),
-    use_offset=True
+    use_offset=False
 )
