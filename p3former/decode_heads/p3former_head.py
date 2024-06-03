@@ -6,6 +6,7 @@ from mmdet3d.registry import MODELS, TASK_UTILS
 from mmdet.models.utils import multi_apply
 from mmdet.utils import reduce_mean
 from mmdet.utils import AvoidOOM
+
 AvoidCUDAOOM = AvoidOOM(to_cpu=False)
 from mmdet.models.losses import accuracy
 from skimage import measure
@@ -19,17 +20,20 @@ from mmcv.ops import SubMConv3d
 
 from debug_utils.debug_utils import draw_point_with, write_img
 
+
 @MODELS.register_module()
 class _Masked_Focal_Attention(nn.Module):
-    def __init__(self,
-                 in_channels=256,
-                 feat_channels=64,
-                 out_channels=None,
-                 gate_sigmoid=True,
-                 gate_norm_act=False,
-                 activate_out=False,
-                 act_cfg=dict(type='GELU'),
-                 norm_cfg=dict(type='LN')):
+    def __init__(
+        self,
+        in_channels=256,
+        feat_channels=64,
+        out_channels=None,
+        gate_sigmoid=True,
+        gate_norm_act=False,
+        activate_out=False,
+        act_cfg=dict(type="GELU"),
+        norm_cfg=dict(type="LN"),
+    ):
         super().__init__()
         self.in_channels = in_channels
         self.feat_channels = feat_channels
@@ -44,10 +48,11 @@ class _Masked_Focal_Attention(nn.Module):
         self.num_params_in = self.feat_channels
         self.num_params_out = self.feat_channels
         self.dynamic_layer = nn.Linear(
-            self.in_channels, self.num_params_in + self.num_params_out)
-        self.input_layer = nn.Linear(self.in_channels,
-                                     self.num_params_in + self.num_params_out,
-                                     1)
+            self.in_channels, self.num_params_in + self.num_params_out
+        )
+        self.input_layer = nn.Linear(
+            self.in_channels, self.num_params_in + self.num_params_out, 1
+        )
         self.input_gate = nn.Linear(self.in_channels, self.feat_channels, 1)
         self.update_gate = nn.Linear(self.in_channels, self.feat_channels, 1)
         if self.gate_norm_act:
@@ -65,22 +70,21 @@ class _Masked_Focal_Attention(nn.Module):
 
     def forward(self, queries, features, masks):
         queries = queries.reshape(-1, self.in_channels)
-        binary_masks = (masks.sigmoid()>0.5).float()
-        masked_features = torch.einsum('nv,vc->nc', binary_masks, features)
-        num_queries= queries.size(0)
+        binary_masks = (masks.sigmoid() > 0.5).float()
+        masked_features = torch.einsum("nv,vc->nc", binary_masks, features)
+        num_queries = queries.size(0)
 
         # gated summation
         parameters = self.dynamic_layer(queries)
 
-        param_in = parameters[:, :self.num_params_in].view(
-            -1, self.feat_channels)
-        param_out = parameters[:, -self.num_params_out:].view(
-            -1, self.feat_channels)
+        param_in = parameters[:, : self.num_params_in].view(-1, self.feat_channels)
+        param_out = parameters[:, -self.num_params_out :].view(-1, self.feat_channels)
 
         input_feats = self.input_layer(
-            masked_features.reshape(num_queries, -1, self.feat_channels))
-        input_in = input_feats[..., :self.num_params_in]
-        input_out = input_feats[..., -self.num_params_out:]
+            masked_features.reshape(num_queries, -1, self.feat_channels)
+        )
+        input_in = input_feats[..., : self.num_params_in]
+        input_out = input_feats[..., -self.num_params_out :]
 
         gate_feats = input_in * param_in.unsqueeze(-2)
         if self.gate_norm_act:
@@ -98,8 +102,7 @@ class _Masked_Focal_Attention(nn.Module):
             param_out = self.activation(param_out)
             input_out = self.activation(input_out)
 
-        queries = update_gate * param_out.unsqueeze(
-            -2) + input_gate * input_out
+        queries = update_gate * param_out.unsqueeze(-2) + input_gate * input_out
 
         queries = self.fc_layer(queries)
         queries = self.fc_norm(queries)
@@ -107,43 +110,47 @@ class _Masked_Focal_Attention(nn.Module):
 
         return queries
 
+
 @MODELS.register_module()
 class _Transformer_Decoder(nn.Module):
     def __init__(
-            self,
-            embed_dims,
-            cross_attn_cfg=dict(
-                type='_Masked_Focal_Attention',
-                act_cfg=dict(type='GELU'),
-                norm_cfg=dict(type='LN'),
-            ),
-            num_heads=8,
-            conv_kernel_size=1,
-            with_ffn=True,
-            feedforward_channels=2048,
-            num_ffn_fcs=2,
-            dropout=0.0,
-            ffn_act_cfg=dict(type='GELU'),
+        self,
+        embed_dims,
+        cross_attn_cfg=dict(
+            type="_Masked_Focal_Attention",
+            act_cfg=dict(type="GELU"),
+            norm_cfg=dict(type="LN"),
+        ),
+        num_heads=8,
+        conv_kernel_size=1,
+        with_ffn=True,
+        feedforward_channels=2048,
+        num_ffn_fcs=2,
+        dropout=0.0,
+        ffn_act_cfg=dict(type="GELU"),
     ):
         super().__init__()
         self.with_ffn = with_ffn
 
-        cross_attn_cfg['in_channels'] = embed_dims
-        cross_attn_cfg['feat_channels'] = embed_dims
-        cross_attn_cfg['out_channels'] = embed_dims
+        cross_attn_cfg["in_channels"] = embed_dims
+        cross_attn_cfg["feat_channels"] = embed_dims
+        cross_attn_cfg["out_channels"] = embed_dims
         self.cross_attn = MODELS.build(cross_attn_cfg)
-        self.self_attn = MultiheadAttention(embed_dims * conv_kernel_size,
-                                                num_heads, dropout)
+        self.self_attn = MultiheadAttention(
+            embed_dims * conv_kernel_size, num_heads, dropout
+        )
         self.self_norm = build_norm_layer(
-            dict(type='LN'), embed_dims * conv_kernel_size)[1]
+            dict(type="LN"), embed_dims * conv_kernel_size
+        )[1]
         if self.with_ffn:
             self.ffn = FFN(
                 embed_dims,
                 feedforward_channels,
                 num_ffn_fcs,
                 act_cfg=ffn_act_cfg,
-                ffn_drop=dropout)
-            self.ffn_norm = build_norm_layer(dict(type='LN'), embed_dims)[1]
+                ffn_drop=dropout,
+            )
+            self.ffn_norm = build_norm_layer(dict(type="LN"), embed_dims)[1]
 
     def forward_single(self, queries, features, mask_preds):
         queries = self.cross_attn(queries, features, mask_preds)  # [N,1,C]
@@ -155,8 +162,7 @@ class _Transformer_Decoder(nn.Module):
         return queries
 
     def forward(self, queries, features, mask_preds):
-        """Update queries in batch level.
-        """
+        """Update queries in batch level."""
         new_queries = []
         for i in range(len(mask_preds)):
             new_queries.append(
@@ -164,8 +170,10 @@ class _Transformer_Decoder(nn.Module):
                     queries[i],
                     features[i],
                     mask_preds[i],
-                ))
+                )
+            )
         return new_queries
+
 
 class MLP(nn.Module):
     def __init__(self, channels):
@@ -174,58 +182,64 @@ class MLP(nn.Module):
         for cc in range(len(channels) - 2):
             self.mlp.append(
                 nn.Sequential(
-                    nn.Linear(
-                        channels[cc],
-                        channels[cc + 1],
-                        bias=False),
-                    build_norm_layer(
-                        dict(type='LN'), channels[cc + 1])[1],
-                    build_activation_layer(
-                        dict(type='GELU'))))
-        self.mlp.append(
-            nn.Linear(channels[-2], channels[-1]))
-        
+                    nn.Linear(channels[cc], channels[cc + 1], bias=False),
+                    build_norm_layer(dict(type="LN"), channels[cc + 1])[1],
+                    build_activation_layer(dict(type="GELU")),
+                )
+            )
+        self.mlp.append(nn.Linear(channels[-2], channels[-1]))
+
     def forward(self, input):
         for layer in self.mlp:
             input = layer(input)
         return input
 
+
 @MODELS.register_module()
 class _P3FormerHead(nn.Module):
     """P3Former head for 3D panoptic segmentation."""
 
-    def __init__(self,
-                 num_classes,
-                 num_queries,
-                 embed_dims,
-                 thing_class,
-                 stuff_class,
-                 ignore_index,
-                 num_decoder_layers=3,
-                 pos_dim=3,
-                 transformer_decoder_cfg=dict(type='_Transformer_Decoder'),
-                 loss_cls=None,
-                 loss_mask=None,
-                 loss_dice=None,
-                 use_sem_loss=True,
-                 assigner_zero_layer_cfg=None,
-                 assigner_cfg=None,
-                 sampler_cfg=None,
-                 cls_channels=(128, 128, 20),
-                 mask_channels=(128, 128, 128, 128, 128),
-                 pe_type='mpe',
-                 use_pa_seg=True,
-                 use_center_queries=True,
-                 pa_seg_weight = 0.2,
-                 score_thr=0.4,
-                 iou_thr=0.8,
-                 mask_score_thr=0.5,
-                 grid_size=[480, 360, 32],
-                 point_cloud_range=[]):
+    def __init__(
+        self,
+        num_classes,
+        num_queries,
+        embed_dims,
+        thing_class,
+        stuff_class,
+        ignore_index,
+        num_decoder_layers=3,
+        pos_dim=3,
+        transformer_decoder_cfg=dict(type="_Transformer_Decoder"),
+        loss_cls=None,
+        loss_mask=None,
+        loss_dice=None,
+        use_sem_loss=True,
+        assigner_zero_layer_cfg=None,
+        assigner_cfg=None,
+        sampler_cfg=None,
+        cls_channels=(128, 128, 20),
+        mask_channels=(128, 128, 128, 128, 128),
+        pe_type="mpe",
+        use_pa_seg=True,
+        use_center_queries=True,
+        pa_seg_weight=0.2,
+        score_thr=0.4,
+        iou_thr=0.8,
+        mask_score_thr=0.5,
+        grid_size=[480, 360, 32],
+        point_cloud_range=[],
+    ):
         super().__init__()
 
-        self.queries = SubMConv3d(embed_dims, num_queries, indice_key="logit", 
-                                    kernel_size=1, stride=1, padding=0, bias=False)
+        self.queries = SubMConv3d(
+            embed_dims,
+            num_queries,
+            indice_key="logit",
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            bias=False,
+        )
         self.num_classes = num_classes
         self.ignore_index = ignore_index
         self.mask_score_thr = mask_score_thr
@@ -245,14 +259,23 @@ class _P3FormerHead(nn.Module):
 
         self.use_sem_loss = use_sem_loss
         if use_sem_loss:
-            self.loss_ce = MODELS.build(dict(
-                            type='mmdet.CrossEntropyLoss',
-                            use_sigmoid=False,
-                            class_weight=None,
-                            loss_weight=1.0))
-            self.loss_lovasz = MODELS.build(dict(type='LovaszLoss',
-                                                reduction='none',))
-            self.sem_queries = nn.Conv3d(embed_dims, num_classes, kernel_size=1, stride=1, padding=0, bias=False)
+            self.loss_ce = MODELS.build(
+                dict(
+                    type="mmdet.CrossEntropyLoss",
+                    use_sigmoid=False,
+                    class_weight=None,
+                    loss_weight=1.0,
+                )
+            )
+            self.loss_lovasz = MODELS.build(
+                dict(
+                    type="LovaszLoss",
+                    reduction="none",
+                )
+            )
+            self.sem_queries = nn.Conv3d(
+                embed_dims, num_classes, kernel_size=1, stride=1, padding=0, bias=False
+            )
 
         # build assigner
         if assigner_zero_layer_cfg is not None:
@@ -262,37 +285,39 @@ class _P3FormerHead(nn.Module):
         if sampler_cfg is not None:
             self.sampler = TASK_UTILS.build(sampler_cfg)
 
-
         # build pe
         self.pe_type = pe_type
         self.point_cloud_range = point_cloud_range
         self.grid_size = grid_size
-        if self.pe_type == 'polar' or self.pe_type == 'cart':
+        if self.pe_type == "polar" or self.pe_type == "cart":
             self.position_proj = nn.Linear(pos_dim, embed_dims)
-            self.position_norm = build_norm_layer(dict(type='LN'),
-                                                  embed_dims)[1]
+            self.position_norm = build_norm_layer(dict(type="LN"), embed_dims)[1]
             self.feat_conv = nn.Sequential(
                 nn.Linear(embed_dims, embed_dims, bias=False),
-                build_norm_layer(dict(type='LN'), embed_dims)[1],
-                build_activation_layer(dict(type='GELU')))
-        elif self.pe_type == 'mpe':
+                build_norm_layer(dict(type="LN"), embed_dims)[1],
+                build_activation_layer(dict(type="GELU")),
+            )
+        elif self.pe_type == "mpe":
             self.polar_proj = nn.Linear(pos_dim, embed_dims)
-            self.polar_norm = build_norm_layer(dict(type='LN'), embed_dims)[1]
+            self.polar_norm = build_norm_layer(dict(type="LN"), embed_dims)[1]
             self.cart_proj = nn.Linear(pos_dim, embed_dims)
-            self.cart_norm = build_norm_layer(dict(type='LN'), embed_dims)[1]
+            self.cart_norm = build_norm_layer(dict(type="LN"), embed_dims)[1]
 
             self.pe_conv = nn.ModuleList()
+            self.pe_conv.append(nn.Linear(embed_dims, embed_dims, bias=False))
+            self.pe_conv.append(build_norm_layer(dict(type="LN"), embed_dims)[1])
             self.pe_conv.append(
-                nn.Linear(embed_dims, embed_dims, bias=False))
-            self.pe_conv.append(
-                build_norm_layer(dict(type='LN'), embed_dims)[1])
-            self.pe_conv.append(build_activation_layer(dict(type='ReLU', inplace=True),))    
-            
+                build_activation_layer(
+                    dict(type="ReLU", inplace=True),
+                )
+            )
+
         else:
             self.feat_conv = nn.Sequential(
                 nn.Linear(embed_dims, embed_dims, bias=False),
-                build_norm_layer(dict(type='LN'), embed_dims)[1],
-                build_activation_layer(dict(type='GELU')))
+                build_norm_layer(dict(type="LN"), embed_dims)[1],
+                build_activation_layer(dict(type="GELU")),
+            )
 
         # build transformer decoder
         transformer_decoder_cfg.update(embed_dims=embed_dims)
@@ -308,7 +333,7 @@ class _P3FormerHead(nn.Module):
         if use_pa_seg:
             self.fc_coor_mask = nn.ModuleList()
             self.fc_coor_mask.append(MLP(mask_channels))
-            self.pa_seg_weight = pa_seg_weight    
+            self.pa_seg_weight = pa_seg_weight
         for _ in range(num_decoder_layers):
             self.fc_cls.append(MLP(cls_channels))
             self.fc_mask.append(MLP(mask_channels))
@@ -320,20 +345,20 @@ class _P3FormerHead(nn.Module):
             # self.center_norm = build_norm_layer(dict(type='LN'), embed_dims)[1]
             self.center_feat_conv = nn.Sequential(
                 nn.Linear(3, embed_dims, bias=False),
-                build_norm_layer(dict(type='LN'), embed_dims)[1],
-                build_activation_layer(dict(type='GELU')))
-    def init_inputs(self,
-                features,
-                voxel_coors,
-                batch_size, 
-                embedding, 
-                batch_data_samples, 
-                is_train):
+                build_norm_layer(dict(type="LN"), embed_dims)[1],
+                build_activation_layer(dict(type="GELU")),
+            )
+
+    def init_inputs(
+        self, features, voxel_coors, batch_size, embedding, batch_data_samples, is_train
+    ):
         # Train
         if is_train:
             if self.use_center_queries:
                 # Center generation from shifted embeddings (shifted points)
-                center_pcls = self.center_generation(batch_data_samples, embedding, is_train=is_train)
+                center_pcls = self.center_generation(
+                    batch_data_samples, embedding, is_train=is_train
+                )
 
                 # Flag = True if center_pcls is None else False
                 flag = not any(pcl.shape[0] == 0 for pcl in center_pcls)
@@ -356,14 +381,19 @@ class _P3FormerHead(nn.Module):
                     # Center Features
                     queries_s = self.center_feat_conv(center_pcls[i].float())
                     queries.append(queries_s)
-                    
+
                     # Explicitly delete intermediate tensor
                     del queries_s
 
             # Else use random queries
             elif self.use_center_queries and not flag:
                 self.num_queries = []
-                pre_queries = [torch.empty(0, 3, dtype=features[0].dtype, device=features[0].device) for i in range(batch_size)]
+                pre_queries = [
+                    torch.empty(
+                        0, 3, dtype=features[0].dtype, device=features[0].device
+                    )
+                    for i in range(batch_size)
+                ]
                 for batch_i in range(batch_size):
                     self.num_queries.append(0)
                     queries_s = self.center_feat_conv(pre_queries[batch_i].float())
@@ -371,14 +401,26 @@ class _P3FormerHead(nn.Module):
                     del queries_s
 
             else:
-                queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
+                queries = (
+                    self.queries.weight.clone()
+                    .squeeze(0)
+                    .squeeze(0)
+                    .repeat(batch_size, 1, 1)
+                    .permute(0, 2, 1)
+                )
                 self.num_queries = [128] * queries.shape[0]
                 queries = [queries[i] for i in range(queries.shape[0])]
 
             # Semantic predictions for stuff queries
             sem_preds = []
             if self.use_sem_loss:
-                sem_queries = self.sem_queries.weight.clone().squeeze(-1).squeeze(-1).repeat(1,1,batch_size).permute(2,0,1)
+                sem_queries = (
+                    self.sem_queries.weight.clone()
+                    .squeeze(-1)
+                    .squeeze(-1)
+                    .repeat(1, 1, batch_size)
+                    .permute(2, 0, 1)
+                )
                 for b in range(len(pe_features)):
                     sem_pred = torch.einsum("nc,vc->vn", sem_queries[b], pe_features[b])
                     sem_preds.append(sem_pred)
@@ -395,10 +437,16 @@ class _P3FormerHead(nn.Module):
             sem_preds = []
             queries = []
             if self.use_sem_loss:
-                sem_queries = self.sem_queries.weight.clone().squeeze(-1).squeeze(-1).repeat(1,1,batch_size).permute(2,0,1)
+                sem_queries = (
+                    self.sem_queries.weight.clone()
+                    .squeeze(-1)
+                    .squeeze(-1)
+                    .repeat(1, 1, batch_size)
+                    .permute(2, 0, 1)
+                )
                 for b in range(len(pe_features)):
                     sem_pred = torch.einsum("nc,vc->vn", sem_queries[b], pe_features[b])
-                    
+
                     # Get thing valid points
                     sem_pred_label = sem_pred.sigmoid().argmax(dim=1)
                     valids = []
@@ -406,9 +454,12 @@ class _P3FormerHead(nn.Module):
                     for batch_idx in range(len(batch_data_samples)):
                         semantic_sample = sem_pred_label[coors[:, 0] == batch_idx]
                         point2voxel_map = batch_data_samples[
-                            batch_idx].gt_pts_seg.point2voxel_map.long()
+                            batch_idx
+                        ].gt_pts_seg.point2voxel_map.long()
                         point_semantic_sample = semantic_sample[point2voxel_map]
-                        valid = np.isin(point_semantic_sample.cpu().numpy(), self.thing_class[0])
+                        valid = np.isin(
+                            point_semantic_sample.cpu().numpy(), self.thing_class[0]
+                        )
                         valids.append(valid)
 
                     sem_preds.append(sem_pred)
@@ -417,7 +468,9 @@ class _P3FormerHead(nn.Module):
                     del sem_pred, stuff_queries
 
             if self.use_center_queries:
-                center_pcls = self.center_generation(batch_data_samples, embedding, is_train=is_train, valid=valids)
+                center_pcls = self.center_generation(
+                    batch_data_samples, embedding, is_train=is_train, valid=valids
+                )
 
                 # Flag = True if center_pcls is None else False
                 flag = not any(pcl.shape[0] == 0 for pcl in center_pcls)
@@ -438,12 +491,23 @@ class _P3FormerHead(nn.Module):
             # Else use random queries
             elif self.use_center_queries and not flag:
                 self.num_queries = [0] * batch_size
-                ins_queries = [torch.empty(0, 256, dtype=features[0].dtype, device=features[0].device) for i in range(batch_size)]
+                ins_queries = [
+                    torch.empty(
+                        0, 256, dtype=features[0].dtype, device=features[0].device
+                    )
+                    for i in range(batch_size)
+                ]
                 for i in range(len(ins_queries)):
                     queries[i] = torch.cat([ins_queries[i], queries[i]], dim=0)
 
             else:
-                ins_queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
+                ins_queries = (
+                    self.queries.weight.clone()
+                    .squeeze(0)
+                    .squeeze(0)
+                    .repeat(batch_size, 1, 1)
+                    .permute(0, 2, 1)
+                )
                 self.num_queries = [128] * ins_queries.shape[0]
                 for i in range(len(ins_queries)):
                     queries[i] = torch.cat([ins_queries[i], queries[i]], dim=0)
@@ -459,54 +523,57 @@ class _P3FormerHead(nn.Module):
 
         if self.pe_type is not None:
             normed_polar_coors = [
-                voxel_coor[:, 1:] / voxel_coor.new_tensor(self.grid_size)[None, :].float()
+                voxel_coor[:, 1:]
+                / voxel_coor.new_tensor(self.grid_size)[None, :].float()
                 for voxel_coor in voxel_coors
             ]
 
-        if self.pe_type == 'cart' or self.pe_type == 'mpe':
+        if self.pe_type == "cart" or self.pe_type == "mpe":
             normed_cat_coors = []
             for idx in range(len(normed_polar_coors)):
                 normed_polar_coor = normed_polar_coors[idx].clone()
                 polar_coor = normed_polar_coor.new_zeros(normed_polar_coor.shape)
                 for i in range(3):
-                    polar_coor[:, i] = normed_polar_coor[:, i]*(
-                                        self.point_cloud_range[i+3] -
-                                        self.point_cloud_range[i]) + \
-                                        self.point_cloud_range[i]
+                    polar_coor[:, i] = (
+                        normed_polar_coor[:, i]
+                        * (self.point_cloud_range[i + 3] - self.point_cloud_range[i])
+                        + self.point_cloud_range[i]
+                    )
                 x = polar_coor[:, 0] * torch.cos(polar_coor[:, 1])
                 y = polar_coor[:, 0] * torch.sin(polar_coor[:, 1])
                 cat_coor = torch.stack([x, y, polar_coor[:, 2]], 1)
                 normed_cat_coor = cat_coor / (
-                    self.point_cloud_range[3] - self.point_cloud_range[0])
+                    self.point_cloud_range[3] - self.point_cloud_range[0]
+                )
                 normed_cat_coors.append(normed_cat_coor)
 
-        if self.pe_type == 'polar':
+        if self.pe_type == "polar":
             mpe = []
             for i in range(batch_size):
                 pe = self.position_norm(
-                    self.position_proj(normed_polar_coors[i].float()))
+                    self.position_proj(normed_polar_coors[i].float())
+                )
                 features[i] = features[i] + pe
                 features[i] = self.feat_conv(features[i])
                 if self.use_pa_seg:
                     mpe.append(pe)
 
-        elif self.pe_type == 'cart':
+        elif self.pe_type == "cart":
             mpe = []
             for i in range(batch_size):
-                pe = self.position_norm(
-                    self.position_proj(normed_cat_coors[i].float()))
+                pe = self.position_norm(self.position_proj(normed_cat_coors[i].float()))
                 features[i] = features[i] + pe
                 features[i] = self.feat_conv(features[i])
                 if self.use_pa_seg:
                     mpe.append(pe)
 
-        elif self.pe_type == 'mpe':
+        elif self.pe_type == "mpe":
             mpe = []
             for i in range(batch_size):
-                cart_pe = self.cart_norm(
-                    self.cart_proj(normed_cat_coors[i].float()))
+                cart_pe = self.cart_norm(self.cart_proj(normed_cat_coors[i].float()))
                 polar_pe = self.polar_norm(
-                    self.polar_proj(normed_polar_coors[i].float()))
+                    self.polar_proj(normed_polar_coors[i].float())
+                )
                 for pc in self.pe_conv:
                     polar_pe = pc(polar_pe)
                     cart_pe = pc(cart_pe)
@@ -523,12 +590,11 @@ class _P3FormerHead(nn.Module):
 
         return features, mpe
 
-    def forward(self,
-                batch_inputs, batch_data_samples=None, is_train=False):
-        features = batch_inputs['features']
-        voxel_coors = batch_inputs['voxels']['voxel_coors']
+    def forward(self, batch_inputs, batch_data_samples=None, is_train=False):
+        features = batch_inputs["features"]
+        voxel_coors = batch_inputs["voxels"]["voxel_coors"]
         if self.use_center_queries:
-            embedding = batch_inputs['embedding']
+            embedding = batch_inputs["embedding"]
         else:
             embedding = None
         class_preds_buffer = []
@@ -543,14 +609,22 @@ class _P3FormerHead(nn.Module):
             voxel_coor_split.append(voxel_coors[voxel_coors[:, 0] == i])
 
         queries, features, mpe, sem_preds = self.init_inputs(
-            feature_split, voxel_coor_split, batch_size, embedding, batch_data_samples, is_train)
+            feature_split,
+            voxel_coor_split,
+            batch_size,
+            embedding,
+            batch_data_samples,
+            is_train,
+        )
         _, mask_preds, pos_mask_preds = self.pa_seg(queries, features, mpe, layer=0)
         class_preds_buffer.append(None)
         mask_preds_buffer.append(mask_preds)
         pos_mask_preds_buffer.append(pos_mask_preds)
         for i in range(self.num_decoder_layers):
             queries = self.transformer_decoder[i](queries, features, mask_preds)
-            class_preds, mask_preds, pos_mask_preds = self.pa_seg(queries, features, mpe, layer=i+1)
+            class_preds, mask_preds, pos_mask_preds = self.pa_seg(
+                queries, features, mpe, layer=i + 1
+            )
             class_preds_buffer.append(class_preds)
             mask_preds_buffer.append(mask_preds)
             pos_mask_preds_buffer.append(pos_mask_preds)
@@ -561,16 +635,34 @@ class _P3FormerHead(nn.Module):
         del features
         del queries
         del mpe
-        
+
         return class_preds_buffer, mask_preds_buffer, pos_mask_preds_buffer, sem_preds
 
     def loss(self, batch_inputs, batch_data_samples, train_cfg):
-        class_preds_buffer, mask_preds_buffer, pos_mask_preds_buffer, sem_preds = self.forward(batch_inputs, batch_data_samples, is_train=True)
-        cls_targets_buffer, mask_targets_buffer, label_weights_buffer = self.bipartite_matching(class_preds_buffer, mask_preds_buffer, pos_mask_preds_buffer, batch_data_samples)
+        class_preds_buffer, mask_preds_buffer, pos_mask_preds_buffer, sem_preds = (
+            self.forward(batch_inputs, batch_data_samples, is_train=True)
+        )
+        cls_targets_buffer, mask_targets_buffer, label_weights_buffer = (
+            self.bipartite_matching(
+                class_preds_buffer,
+                mask_preds_buffer,
+                pos_mask_preds_buffer,
+                batch_data_samples,
+            )
+        )
         losses = dict()
-        for i in range(self.num_decoder_layers+1):
-            losses.update(self.loss_single_layer(class_preds_buffer[i], mask_preds_buffer[i], pos_mask_preds_buffer[i],
-                                                cls_targets_buffer[i], mask_targets_buffer[i], label_weights_buffer[i], i))
+        for i in range(self.num_decoder_layers + 1):
+            losses.update(
+                self.loss_single_layer(
+                    class_preds_buffer[i],
+                    mask_preds_buffer[i],
+                    pos_mask_preds_buffer[i],
+                    cls_targets_buffer[i],
+                    mask_targets_buffer[i],
+                    label_weights_buffer[i],
+                    i,
+                )
+            )
         del cls_targets_buffer
         del mask_targets_buffer
         del label_weights_buffer
@@ -585,17 +677,21 @@ class _P3FormerHead(nn.Module):
             ]
             seg_label = torch.cat(gt_semantic_segs)
             sem_preds = torch.cat(sem_preds, dim=0)
-            losses['loss_ce'] = self.loss_ce(
-                sem_preds, seg_label, ignore_index=self.ignore_index)
-            losses['loss_lovasz'] = self.loss_lovasz(
-                sem_preds, seg_label, ignore_index=self.ignore_index)
+            losses["loss_ce"] = self.loss_ce(
+                sem_preds, seg_label, ignore_index=self.ignore_index
+            )
+            losses["loss_lovasz"] = self.loss_lovasz(
+                sem_preds, seg_label, ignore_index=self.ignore_index
+            )
         # losses['loss_ce'] += 0 * sum(p.sum() for p in self.parameters())
         del sem_preds
         del gt_semantic_segs
         del seg_label
         return losses
 
-    def bipartite_matching(self, class_preds, mask_preds, pos_mask_preds, batch_data_samples):
+    def bipartite_matching(
+        self, class_preds, mask_preds, pos_mask_preds, batch_data_samples
+    ):
         gt_classes, gt_masks = self.generate_mask_class_target(batch_data_samples)
 
         gt_classes = [gt_classes[i] for i in range(len(gt_classes))]
@@ -611,8 +707,12 @@ class _P3FormerHead(nn.Module):
         label_weights_buffer = []
 
         for b in range(len(gt_classes)):
-            is_thing_class = (gt_classes[b]<=self.thing_class[-1]) & (gt_classes[b]!=self.ignore_index)
-            is_stuff_class = (gt_classes[b]>=self.stuff_class[0]) & (gt_classes[b]!=self.ignore_index)
+            is_thing_class = (gt_classes[b] <= self.thing_class[-1]) & (
+                gt_classes[b] != self.ignore_index
+            )
+            is_stuff_class = (gt_classes[b] >= self.stuff_class[0]) & (
+                gt_classes[b] != self.ignore_index
+            )
             gt_thing_classes.append(gt_classes[b][is_thing_class])
             gt_thing_masks.append(gt_masks[b][is_thing_class])
             gt_stuff_classes.append(gt_classes[b][is_stuff_class])
@@ -620,21 +720,27 @@ class _P3FormerHead(nn.Module):
 
         sampling_results = []
         for b in range(len(mask_preds[0])):
-            thing_masks_pred_detach = mask_preds[0][b][:self.num_queries[b],:].detach()
+            thing_masks_pred_detach = mask_preds[0][b][
+                : self.num_queries[b], :
+            ].detach()
             sampled_gt_instances = InstanceData(
-                labels=gt_thing_classes[b], masks=gt_thing_masks[b])
+                labels=gt_thing_classes[b], masks=gt_thing_masks[b]
+            )
             sampled_pred_instances = InstanceData(masks=thing_masks_pred_detach)
 
             assign_result = self.zero_assigner.assign(
                 sampled_pred_instances,
                 sampled_gt_instances,
-                img_meta=None,)
-            sampling_result = self.sampler.sample(assign_result,
-                                                    sampled_pred_instances,
-                                                    sampled_gt_instances)
+                img_meta=None,
+            )
+            sampling_result = self.sampler.sample(
+                assign_result, sampled_pred_instances, sampled_gt_instances
+            )
             sampling_results.append(sampling_result)
 
-        cls_targets, mask_targets, label_weights, _ = self.get_targets(sampling_results, gt_stuff_masks, gt_stuff_classes)
+        cls_targets, mask_targets, label_weights, _ = self.get_targets(
+            sampling_results, gt_stuff_masks, gt_stuff_classes
+        )
         cls_targets_buffer.append(cls_targets)
         mask_targets_buffer.append(mask_targets)
         label_weights_buffer.append(label_weights)
@@ -643,25 +749,34 @@ class _P3FormerHead(nn.Module):
             sampling_results = []
             for b in range(len(mask_preds[0])):
                 if class_preds[layer] is not None:
-                    thing_class_pred_detach = class_preds[layer][b][:self.num_queries[b],:].detach()
+                    thing_class_pred_detach = class_preds[layer][b][
+                        : self.num_queries[b], :
+                    ].detach()
                 else:
                     # for layer 1, we don't have class_preds from layer 0, so we use class_preds from layer 1 for matching
-                    thing_class_pred_detach = class_preds[layer+1][b][:self.num_queries[b],:].detach()
-                thing_masks_pred_detach = thing_masks_pred_detach = mask_preds[layer][b][:self.num_queries[b],:].detach()
+                    thing_class_pred_detach = class_preds[layer + 1][b][
+                        : self.num_queries[b], :
+                    ].detach()
+                thing_masks_pred_detach = thing_masks_pred_detach = mask_preds[layer][
+                    b
+                ][: self.num_queries[b], :].detach()
                 sampled_gt_instances = InstanceData(
-                    labels=gt_thing_classes[b], masks=gt_thing_masks[b])
+                    labels=gt_thing_classes[b], masks=gt_thing_masks[b]
+                )
                 sampled_pred_instances = InstanceData(
-                    scores=thing_class_pred_detach, masks=thing_masks_pred_detach)
+                    scores=thing_class_pred_detach, masks=thing_masks_pred_detach
+                )
                 assign_result = self.assigner.assign(
-                    sampled_pred_instances,
-                    sampled_gt_instances,
-                    img_meta=None)
-                sampling_result = self.sampler.sample(assign_result,
-                                                      sampled_pred_instances,
-                                                      sampled_gt_instances)
+                    sampled_pred_instances, sampled_gt_instances, img_meta=None
+                )
+                sampling_result = self.sampler.sample(
+                    assign_result, sampled_pred_instances, sampled_gt_instances
+                )
                 sampling_results.append(sampling_result)
 
-            cls_targets, mask_targets, label_weights, _ = self.get_targets(sampling_results, gt_stuff_masks, gt_stuff_classes)
+            cls_targets, mask_targets, label_weights, _ = self.get_targets(
+                sampling_results, gt_stuff_masks, gt_stuff_classes
+            )
             cls_targets_buffer.append(cls_targets)
             mask_targets_buffer.append(mask_targets)
             label_weights_buffer.append(label_weights)
@@ -675,13 +790,24 @@ class _P3FormerHead(nn.Module):
 
         return cls_targets_buffer, mask_targets_buffer, label_weights_buffer
 
-    def loss_single_layer(self, class_preds, mask_preds, pos_mask_preds, class_targets, mask_targets, label_weights, layer, reduction_override=None):
+    def loss_single_layer(
+        self,
+        class_preds,
+        mask_preds,
+        pos_mask_preds,
+        class_targets,
+        mask_targets,
+        label_weights,
+        layer,
+        reduction_override=None,
+    ):
         batch_size = len(mask_preds)
         losses = dict()
 
         class_targets = torch.cat(class_targets, 0)
         pos_inds = (class_targets != self.ignore_index) & (
-            class_targets < self.num_classes)
+            class_targets < self.num_classes
+        )
         bool_pos_inds = pos_inds.type(torch.bool)
         bool_pos_inds_split = bool_pos_inds.reshape(batch_size, -1)
 
@@ -691,34 +817,33 @@ class _P3FormerHead(nn.Module):
             num_pos = pos_inds.sum().float()
             avg_factor = reduce_mean(num_pos)
 
-            losses[f'loss_cls_{layer}'] = self.loss_cls(
+            losses[f"loss_cls_{layer}"] = self.loss_cls(
                 class_preds,
                 class_targets,
                 label_weights,
                 avg_factor=avg_factor,
-                reduction_override=reduction_override)
+                reduction_override=reduction_override,
+            )
 
         # mask loss
         loss_mask = 0
         valid_bs = 0
-        for mask_idx, (mpred, mtarget) in enumerate(
-                zip(mask_preds, mask_targets)):
+        for mask_idx, (mpred, mtarget) in enumerate(zip(mask_preds, mask_targets)):
             mp = mpred[bool_pos_inds_split[mask_idx]]
             mt = mtarget[bool_pos_inds_split[mask_idx]]
             if len(mp) > 0:
                 valid_bs += 1
                 loss_mask += self.loss_mask(
-                    mp.reshape(-1, 1), (1 - mt).long().reshape(
-                        -1))  # (1 - mt) for binary focal loss
+                    mp.reshape(-1, 1), (1 - mt).long().reshape(-1)
+                )  # (1 - mt) for binary focal loss
         if valid_bs > 0:
-            losses[f'loss_mask_{layer}'] = loss_mask / valid_bs
+            losses[f"loss_mask_{layer}"] = loss_mask / valid_bs
         else:
-            losses[f'loss_mask_{layer}'] = class_preds.sum() * 0.0
+            losses[f"loss_mask_{layer}"] = class_preds.sum() * 0.0
 
         loss_dice = 0
         valid_bs = 0
-        for mask_idx, (mpred, mtarget) in enumerate(
-                zip(mask_preds, mask_targets)):
+        for mask_idx, (mpred, mtarget) in enumerate(zip(mask_preds, mask_targets)):
             mp = mpred[bool_pos_inds_split[mask_idx]]
             mt = mtarget[bool_pos_inds_split[mask_idx]]
             if len(mp) > 0:
@@ -726,15 +851,16 @@ class _P3FormerHead(nn.Module):
                 loss_dice += self.loss_dice(mp, mt)
 
         if valid_bs > 0:
-            losses[f'loss_dice_{layer}'] = loss_dice / valid_bs
+            losses[f"loss_dice_{layer}"] = loss_dice / valid_bs
         else:
-            losses[f'loss_dice_{layer}'] = class_preds.sum() * 0.0
+            losses[f"loss_dice_{layer}"] = class_preds.sum() * 0.0
 
         if self.use_pa_seg:
             loss_dice_pos = 0
             valid_bs = 0
             for mask_idx, (mpred, mtarget) in enumerate(
-                    zip(pos_mask_preds, mask_targets)):
+                zip(pos_mask_preds, mask_targets)
+            ):
                 mp = mpred[bool_pos_inds_split[mask_idx]]
                 mt = mtarget[bool_pos_inds_split[mask_idx]]
                 if len(mp) > 0:
@@ -742,9 +868,9 @@ class _P3FormerHead(nn.Module):
                     loss_dice_pos += self.loss_dice(mp, mt) * self.pa_seg_weight
 
             if valid_bs > 0:
-                losses[f'loss_dice_pos_{layer}'] = loss_dice_pos / valid_bs
+                losses[f"loss_dice_pos_{layer}"] = loss_dice_pos / valid_bs
             else:
-                losses[f'loss_dice_pos_{layer}'] = class_preds.sum() * 0.0
+                losses[f"loss_dice_pos_{layer}"] = class_preds.sum() * 0.0
 
         return losses
 
@@ -762,7 +888,7 @@ class _P3FormerHead(nn.Module):
         pos_inds = [sr.pos_inds for sr in sampling_results]
         neg_inds = [sr.neg_inds for sr in sampling_results]
         pos_gt_masks = [sr.pos_gt_masks for sr in sampling_results]
-        if hasattr(sampling_results[0], 'pos_gt_labels'):
+        if hasattr(sampling_results[0], "pos_gt_labels"):
             pos_gt_labels = [sr.pos_gt_labels for sr in sampling_results]
         else:
             pos_gt_labels = [None] * len(sampling_results)
@@ -775,7 +901,8 @@ class _P3FormerHead(nn.Module):
             pos_gt_labels,
             gt_sem_masks,
             gt_sem_classes,
-            positive_weight=positive_weight)
+            positive_weight=positive_weight,
+        )
 
         return (labels, mask_targets, label_weights, mask_weights)
 
@@ -793,11 +920,10 @@ class _P3FormerHead(nn.Module):
         num_neg = negative_indices.shape[0]
         num_samples = num_pos + num_neg
         num_points = positive_gt_masks.shape[-1]
-        labels = positive_gt_masks.new_full((num_samples, ),
-                                            self.num_classes,
-                                            dtype=torch.long)
-        label_weights = positive_gt_masks.new_zeros(num_samples,
-                                                    self.num_classes)
+        labels = positive_gt_masks.new_full(
+            (num_samples,), self.num_classes, dtype=torch.long
+        )
+        label_weights = positive_gt_masks.new_zeros(num_samples, self.num_classes)
         mask_targets = positive_gt_masks.new_zeros(num_samples, num_points)
         mask_weights = positive_gt_masks.new_zeros(num_samples, num_points)
 
@@ -814,16 +940,21 @@ class _P3FormerHead(nn.Module):
             label_weights[negative_indices] = 1.0
 
         if gt_sem_masks is not None and gt_sem_classes is not None:
-            sem_labels = positive_gt_masks.new_full((self.num_stuff_classes, ),
-                                                    self.num_classes,
-                                                    dtype=torch.long)
-            sem_targets = positive_gt_masks.new_zeros(self.num_stuff_classes,
-                                                      num_points)
-            sem_weights = positive_gt_masks.new_zeros(self.num_stuff_classes,
-                                                      num_points)
+            sem_labels = positive_gt_masks.new_full(
+                (self.num_stuff_classes,), self.num_classes, dtype=torch.long
+            )
+            sem_targets = positive_gt_masks.new_zeros(
+                self.num_stuff_classes, num_points
+            )
+            sem_weights = positive_gt_masks.new_zeros(
+                self.num_stuff_classes, num_points
+            )
             sem_stuff_weights = torch.eye(
-                self.num_stuff_classes, device=positive_gt_masks.device)
-            sem_label_weights = label_weights.new_zeros(self.num_stuff_classes, self.num_classes).float()
+                self.num_stuff_classes, device=positive_gt_masks.device
+            )
+            sem_label_weights = label_weights.new_zeros(
+                self.num_stuff_classes, self.num_classes
+            ).float()
             sem_label_weights[:, self.stuff_class] = sem_stuff_weights
 
             if len(gt_sem_classes > 0):
@@ -851,18 +982,23 @@ class _P3FormerHead(nn.Module):
         return labels, mask_targets, label_weights, mask_weights
 
     def predict(self, batch_inputs, batch_data_samples):
-        class_preds_buffer, mask_preds_buffer, _, _ = self.forward(batch_inputs, batch_data_samples, is_train=False)
-        semantic_preds, instance_ids = self.generate_panoptic_results(class_preds_buffer[-1], mask_preds_buffer[-1])
+        class_preds_buffer, mask_preds_buffer, _, _ = self.forward(
+            batch_inputs, batch_data_samples, is_train=False
+        )
+        semantic_preds, instance_ids = self.generate_panoptic_results(
+            class_preds_buffer[-1], mask_preds_buffer[-1]
+        )
         semantic_preds = torch.cat(semantic_preds)
         instance_ids = torch.cat(instance_ids)
         pts_semantic_preds = []
         pts_instance_preds = []
-        coors = batch_inputs['voxels']['voxel_coors']
+        coors = batch_inputs["voxels"]["voxel_coors"]
         for batch_idx in range(len(batch_data_samples)):
             semantic_sample = semantic_preds[coors[:, 0] == batch_idx]
             instance_sample = instance_ids[coors[:, 0] == batch_idx]
             point2voxel_map = batch_data_samples[
-                batch_idx].gt_pts_seg.point2voxel_map.long()
+                batch_idx
+            ].gt_pts_seg.point2voxel_map.long()
             point_semantic_sample = semantic_sample[point2voxel_map]
             point_instance_sample = instance_sample[point2voxel_map]
             pts_semantic_preds.append(point_semantic_sample.cpu().numpy())
@@ -874,19 +1010,20 @@ class _P3FormerHead(nn.Module):
         if mpe is None:
             mpe = [None] * len(features)
         class_preds, mask_preds, pos_mask_preds = multi_apply(
-            self.pa_seg_single, queries, features, mpe, [layer] * len(features))
+            self.pa_seg_single, queries, features, mpe, [layer] * len(features)
+        )
         return class_preds, mask_preds, pos_mask_preds
 
     def pa_seg_single(self, queries, features, mpe, layer):
         """Get Predictions of a single sample level."""
         mask_queries = queries
         mask_queries = self.fc_mask[layer](mask_queries)
-        mask_pred = torch.einsum('nc,vc->nv', mask_queries, features)
+        mask_pred = torch.einsum("nc,vc->nv", mask_queries, features)
 
         if self.use_pa_seg:
             pos_mask_queries = queries
             pos_mask_queries = self.fc_coor_mask[layer](pos_mask_queries)
-            pos_mask_pred = torch.einsum('nc,vc->nv', pos_mask_queries, mpe)
+            pos_mask_pred = torch.einsum("nc,vc->nv", pos_mask_queries, mpe)
             mask_pred = mask_pred + pos_mask_pred
         else:
             pos_mask_pred = None
@@ -921,8 +1058,7 @@ class _P3FormerHead(nn.Module):
                     mask.append(gt_panoptici_label == unq_pan)
 
             for unq_sem in unique_semantic_label:
-                if (unq_sem in self.thing_class) or (unq_sem
-                                                     == self.ignore_index):
+                if (unq_sem in self.thing_class) or (unq_sem == self.ignore_index):
                     continue
                 label.append(unq_sem)
                 mask.append(semantic_label == unq_sem)
@@ -932,8 +1068,7 @@ class _P3FormerHead(nn.Module):
                 mask = torch.stack(mask, dim=0)
             else:
                 label = semantic_label.new_zeros(size=[0])
-                mask = semantic_label.new_zeros(
-                    size=[0, semantic_label.shape[-1]])
+                mask = semantic_label.new_zeros(size=[0, semantic_label.shape[-1]])
 
             label, mask = label.long(), mask.long()
             labels.append(label)
@@ -959,30 +1094,30 @@ class _P3FormerHead(nn.Module):
             class_pred = class_preds[i]
             mask_pred = mask_preds[i]
 
-            scores = class_pred[:self.num_queries[i]][:, self.thing_class]
+            scores = class_pred[: self.num_queries[i]][:, self.thing_class]
             thing_scores, thing_labels = scores.sigmoid().max(dim=1)
             thing_scores *= 2
             thing_labels += self.thing_class[0]
-            stuff_scores = class_pred[
-                self.num_queries[i]:][:, self.stuff_class].diag().sigmoid()
+            stuff_scores = (
+                class_pred[self.num_queries[i] :][:, self.stuff_class].diag().sigmoid()
+            )
             stuff_labels = torch.tensor(self.stuff_class)
             stuff_labels = stuff_labels.to(thing_labels.device)
-
 
             scores = torch.cat([thing_scores, stuff_scores], dim=0)
             labels = torch.cat([thing_labels, stuff_labels], dim=0)
 
-            keep = ((scores > self.score_thr) & (labels != self.ignore_index))
+            keep = (scores > self.score_thr) & (labels != self.ignore_index)
             cur_scores = scores[keep]  # [pos_proposal_num]
 
             cur_classes = labels[keep]  # [pos_proposal_num]
             cur_masks = mask_pred[keep]  # [pos_proposal_num, pt_num]
             cur_masks = cur_masks.sigmoid()
 
-            semantic_pred = cur_classes.new_full((cur_masks.shape[-1], ),
-                                                 self.ignore_index)
-            instance_id = cur_classes.new_full((cur_masks.shape[-1], ),
-                                               0)
+            semantic_pred = cur_classes.new_full(
+                (cur_masks.shape[-1],), self.ignore_index
+            )
+            instance_id = cur_classes.new_full((cur_masks.shape[-1],), 0)
 
             if cur_masks.shape[0] == 0:
                 semantic_preds.append(semantic_pred)
@@ -999,7 +1134,7 @@ class _P3FormerHead(nn.Module):
                 mask = cur_mask_ids == k
                 mask_area = mask.sum().item()
                 original_area = (cur_masks[k] >= 0.5).sum().item()
-                if mask_area > 0 and original_area > 0: 
+                if mask_area > 0 and original_area > 0:
                     if mask_area / original_area < self.iou_thr:
                         continue
                     semantic_pred[mask] = pred_class
@@ -1010,8 +1145,9 @@ class _P3FormerHead(nn.Module):
             instance_ids.append(instance_id)
         return (semantic_preds, instance_ids)
 
-
-    def center_generation(self, batch_data_samples, embedding, is_train=True, valid=None):
+    def center_generation(
+        self, batch_data_samples, embedding, is_train=True, valid=None
+    ):
         # Get heatmap
         heatmap = []
         x_edges_list = []
@@ -1029,7 +1165,9 @@ class _P3FormerHead(nn.Module):
             max_val = np.max(emb.detach().cpu().numpy(), axis=0)
             grid_size = 0.1
             num_bins = np.ceil((max_val - min_val) / grid_size).astype(int)[:2]
-            H, x_edges, y_edges = np.histogram2d(shifted_points[:, 0], shifted_points[:, 1], bins=num_bins)
+            H, x_edges, y_edges = np.histogram2d(
+                shifted_points[:, 0], shifted_points[:, 1], bins=num_bins
+            )
 
             heatmap.append(H)
             x_edges_list.append(x_edges)
@@ -1037,11 +1175,18 @@ class _P3FormerHead(nn.Module):
 
         window_size = 5
         threshold = 0.5
-        heatmap_pooled = F.max_pool2d(torch.tensor(np.array(heatmap)), window_size, stride=5, padding=window_size//2)
-        heatmap_pooled = F.interpolate(heatmap_pooled.unsqueeze(0), 
-                                    size=(heatmap[0].shape[0], 
-                                            heatmap[0].shape[1]), mode='bilinear').squeeze(0)
-        
+        heatmap_pooled = F.max_pool2d(
+            torch.tensor(np.array(heatmap)),
+            window_size,
+            stride=5,
+            padding=window_size // 2,
+        )
+        heatmap_pooled = F.interpolate(
+            heatmap_pooled.unsqueeze(0),
+            size=(heatmap[0].shape[0], heatmap[0].shape[1]),
+            mode="bilinear",
+        ).squeeze(0)
+
         #  create binary mask
         heatmap_pooled[heatmap_pooled >= threshold] = 1
         heatmap_pooled[heatmap_pooled < threshold] = 0
@@ -1051,8 +1196,9 @@ class _P3FormerHead(nn.Module):
 
         #  Find contour on heatmap_pooled
         from skimage import measure
+
         contours = measure.find_contours(heatmap_pooled[0], 0.5)
-        
+
         # In each contour, get the center pixel, other pixels map to 0
         new_heatmap = np.zeros_like(heatmap_pooled)
         for contour in contours:
