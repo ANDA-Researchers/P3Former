@@ -51,6 +51,7 @@ mim install mmdet==3.0.0
 mim install mmdet3d==1.1.0
 wget https://data.pyg.org/whl/torch-1.10.0%2Bcu113/torch_scatter-2.0.9-cp38-cp38-linux_x86_64.whl
 pip install torch_scatter-2.0.9-cp38-cp38-linux_x86_64.whl
+pip install yapf==0.40.1
 ```
 
 ## Usage
