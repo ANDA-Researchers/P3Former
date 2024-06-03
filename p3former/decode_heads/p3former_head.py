@@ -420,7 +420,7 @@ class _P3FormerHead(nn.Module):
 
                     # Center Features
                     queries_s = self.center_feat_conv(center_pcls[i].float())
-                    queries[i] = torch.cat([queries_s, stuff_queries], dim=0)
+                    queries[i] = torch.cat([queries_s, queries[i]], dim=0)
             
             # Else use random queries
             elif self.use_center_queries and flag==False:
@@ -429,7 +429,7 @@ class _P3FormerHead(nn.Module):
                     self.num_queries.append(0)
                 ins_queries = [torch.empty(0, 256, dtype=features[0].dtype, device=features[0].device) for i in range(batch_size)]
                 for i in range(len(ins_queries)):
-                    queries[i] = torch.cat([queries[i], ins_queries[i]], dim=0)
+                    queries[i] = torch.cat([ins_queries[i], queries[i]], dim=0)
 
             else:
                 ins_queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
@@ -437,7 +437,7 @@ class _P3FormerHead(nn.Module):
                 for batch_i in range(ins_queries.shape[0]):
                     self.num_queries.append(128)
                 for i in range(len(ins_queries)):
-                    queries[i] = torch.cat([queries[i], ins_queries[i]], dim=0)
+                    queries[i] = torch.cat([ins_queries[i], queries[i]], dim=0)
         else:
             raise NotImplementedError
         
@@ -870,11 +870,16 @@ class _P3FormerHead(nn.Module):
         mask_queries = queries
         mask_queries = self.fc_mask[layer](mask_queries)
         mask_pred = torch.einsum('nc,vc->nv', mask_queries, features)
+        del mask_queries
+        del features
 
         if self.use_pa_seg:
             pos_mask_queries = queries
             pos_mask_queries = self.fc_coor_mask[layer](pos_mask_queries)
             pos_mask_pred = torch.einsum('nc,vc->nv', pos_mask_queries, mpe)
+            del pos_mask_queries
+            del mpe
+            torch.cuda.empty_cache()
             mask_pred = mask_pred + pos_mask_pred
         else:
             pos_mask_pred = None
@@ -882,6 +887,7 @@ class _P3FormerHead(nn.Module):
         if layer != 0:
             cls_queries = queries
             cls_pred = self.fc_cls[layer](cls_queries)
+            del cls_queries
         else:
             cls_pred = None
 
