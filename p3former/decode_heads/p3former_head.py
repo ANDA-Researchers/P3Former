@@ -586,8 +586,8 @@ class _P3FormerHead(nn.Module):
     def bipartite_matching(self, class_preds, mask_preds, pos_mask_preds, batch_data_samples):
         gt_classes, gt_masks = self.generate_mask_class_target(batch_data_samples)
 
-        gt_classes = [gt_classes[i].to('cuda:1') for i in range(len(gt_classes))]
-        gt_masks = [gt_masks[i].to('cuda:1') for i in range(len(gt_masks))]
+        gt_classes = [gt_classes[i] for i in range(len(gt_classes))]
+        gt_masks = [gt_masks[i] for i in range(len(gt_masks))]
 
         gt_thing_classes = []
         gt_thing_masks = []
@@ -608,7 +608,7 @@ class _P3FormerHead(nn.Module):
 
         sampling_results = []
         for b in range(len(mask_preds[0])):
-            thing_masks_pred_detach = mask_preds[0][b][:self.num_queries[b],:].detach().to('cuda:1')
+            thing_masks_pred_detach = mask_preds[0][b][:self.num_queries[b],:].detach()
             sampled_gt_instances = InstanceData(
                 labels=gt_thing_classes[b], masks=gt_thing_masks[b])
             sampled_pred_instances = InstanceData(masks=thing_masks_pred_detach)
@@ -631,11 +631,11 @@ class _P3FormerHead(nn.Module):
             sampling_results = []
             for b in range(len(mask_preds[0])):
                 if class_preds[layer] is not None:
-                    thing_class_pred_detach = class_preds[layer][b][:self.num_queries[b],:].detach().to('cuda:1')
+                    thing_class_pred_detach = class_preds[layer][b][:self.num_queries[b],:].detach()
                 else:
                     # for layer 1, we don't have class_preds from layer 0, so we use class_preds from layer 1 for matching
-                    thing_class_pred_detach = class_preds[layer+1][b][:self.num_queries[b],:].detach().to('cuda:1')
-                thing_masks_pred_detach = thing_masks_pred_detach = mask_preds[layer][b][:self.num_queries[b],:].detach().to('cuda:1')
+                    thing_class_pred_detach = class_preds[layer+1][b][:self.num_queries[b],:].detach()
+                thing_masks_pred_detach = thing_masks_pred_detach = mask_preds[layer][b][:self.num_queries[b],:].detach()
                 sampled_gt_instances = InstanceData(
                     labels=gt_thing_classes[b], masks=gt_thing_masks[b])
                 sampled_pred_instances = InstanceData(

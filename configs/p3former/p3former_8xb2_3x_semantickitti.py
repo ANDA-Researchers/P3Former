@@ -36,7 +36,7 @@ model = dict(
 
 lr = 0.0008
 optim_wrapper = dict(
-    type='OptimWrapper',
+    type='AmpOptimWrapper',
     optimizer=dict(type='AdamW', lr=lr, weight_decay=0.01))
 
 
