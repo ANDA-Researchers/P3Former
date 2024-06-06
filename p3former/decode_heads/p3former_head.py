@@ -327,29 +327,29 @@ class _P3FormerHead(nn.Module):
         if not self.use_centroid:
             queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
         else:
-            normed_polar_coors = [
-                voxel_coor[:, 1:] / voxel_coor.new_tensor(self.grid_size)[None, :].float()
-                for voxel_coor in voxel_coors
-            ]
+            # normed_polar_coors = [
+            #     voxel_coor[:, 1:] / voxel_coor.new_tensor(self.grid_size)[None, :].float()
+            #     for voxel_coor in voxel_coors
+            # ]
             
-            cat_coors = []
-            for idx in range(len(normed_polar_coors)):
-                normed_polar_coor = normed_polar_coors[idx].clone()
-                polar_coor = normed_polar_coor.new_zeros(normed_polar_coor.shape)
-                for i in range(3):
-                    polar_coor[:, i] = normed_polar_coor[:, i]*(
-                                        self.point_cloud_range[i+3] -
-                                        self.point_cloud_range[i]) + \
-                                        self.point_cloud_range[i]
-                x = polar_coor[:, 0] * torch.cos(polar_coor[:, 1])
-                y = polar_coor[:, 0] * torch.sin(polar_coor[:, 1])
-                cat_coor = torch.stack([x, y, polar_coor[:, 2]], 1)
-                cat_coors.append(cat_coor)
-                    
-                min_cluster_size = 10
-                max_num_points = 80_000
-                max_num_clusters = self.num_queries
-                hdb = HDBSCAN(min_cluster_size, n_jobs=-1)
+            # cat_coors = []
+            # for idx in range(len(normed_polar_coors)):
+            #     normed_polar_coor = normed_polar_coors[idx].clone()
+            #     polar_coor = normed_polar_coor.new_zeros(normed_polar_coor.shape)
+            #     for i in range(3):
+            #         polar_coor[:, i] = normed_polar_coor[:, i]*(
+            #                             self.point_cloud_range[i+3] -
+            #                             self.point_cloud_range[i]) + \
+            #                             self.point_cloud_range[i]
+            #     x = polar_coor[:, 0] * torch.cos(polar_coor[:, 1])
+            #     y = polar_coor[:, 0] * torch.sin(polar_coor[:, 1])
+            #     cat_coor = torch.stack([x, y, polar_coor[:, 2]], 1)
+            #     cat_coors.append(cat_coor)
+
+            min_cluster_size = 10
+            max_num_points = 80_000
+            max_num_clusters = self.num_queries
+            hdb = HDBSCAN(min_cluster_size, n_jobs=-1)
             
         queries_buffer = []
         sem_preds = []
@@ -373,22 +373,24 @@ class _P3FormerHead(nn.Module):
                     queries_buffer.append(stuff_queries)
                     continue
                 
-                # Get thing valid points
-                sem_pred_label = sem_pred.argmax(dim=1)
+                # # Get thing valid points
+                # sem_pred_label = sem_pred.argmax(dim=1)
 
 
                 point2voxel_map = batch_data_samples[
                     b].gt_pts_seg.point2voxel_map.long()
-                point_semantic_sample = sem_pred_label[point2voxel_map]
-                valid = torch.isin(point_semantic_sample, 
-                                   torch.tensor(self.thing_class, device=sem_pred.device))
+                # point_semantic_sample = sem_pred_label[point2voxel_map]
+                # valid = torch.isin(point_semantic_sample, 
+                #                    torch.tensor(self.thing_class, device=sem_pred.device))
+                
+                
+                
+                thing_cat_coors = torch_scatter.scatter_mean(embedding[b], point2voxel_map.unsqueeze(1), dim=0)
 
-                embedding[b] = embedding[b][valid]
-
-                thing_cat_coors = cat_coors[b][foreground_mask]
+                thing_cat_coors = thing_cat_coors[foreground_mask]
                 thing_features = pe_features[b][foreground_mask]
                 
-                thing_cat_coors = torch.cat([thing_cat_coors, embedding[b]], dim=0)
+                # thing_cat_coors = torch.cat([thing_cat_coors, embedding[b]], dim=0)
                 if thing_cat_coors.size(dim=0) > max_num_points:
                     idx = torch.randperm(thing_cat_coors.size(0))[:max_num_points]
                     thing_cat_coors = thing_cat_coors[idx]

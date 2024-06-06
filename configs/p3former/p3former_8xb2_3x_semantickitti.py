@@ -54,7 +54,7 @@ param_scheduler = [
         gamma=0.2)
 ]
 
-train_dataloader = dict(batch_size=1, )
+train_dataloader = dict(batch_size=2, )
 
 default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=1))
 
