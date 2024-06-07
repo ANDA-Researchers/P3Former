@@ -28,6 +28,8 @@ param_scheduler = [
         gamma=0.1)
 ]
 
+default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=1))
+
 custom_imports = dict(
     imports=[
         'p3former.backbones.cylinder3d',
