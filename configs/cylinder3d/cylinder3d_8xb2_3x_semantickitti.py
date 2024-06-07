@@ -27,3 +27,17 @@ param_scheduler = [
         milestones=[24, 32],
         gamma=0.1)
 ]
+
+custom_imports = dict(
+    imports=[
+        'p3former.backbones.cylinder3d',
+        'p3former.data_preprocessors.data_preprocessor',
+        'p3former.decode_heads.p3former_head',
+        'p3former.segmentors.p3former',
+        'p3former.task_modules.samplers.mask_pseduo_sampler',
+        'evaluation.metrics.panoptic_seg_metric',
+        'datasets.semantickitti_dataset',
+        'datasets.transforms.loading',
+        'datasets.transforms.transforms_3d',
+    ],
+    allow_failed_imports=False)
