@@ -167,16 +167,17 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
 
             #  compute offset
             for i, b in enumerate(batch_inputs['points']):
-                offset = np.zeros([b.shape[0], 3], dtype=np.float32)
-                offset = nb_aggregate_pointwise_center_offset(offsets=offset, 
-                                                            xyz=b.cpu().numpy(), 
-                                                            ins_labels=data_samples[i].gt_pts_seg.pts_instance_mask.cpu().numpy(), 
-                                                            center_type='Axis_center')
-                data_samples[i].gt_pts_seg.pts_offsets = torch.from_numpy(offset).cuda()
-                
-                sem = data_samples[i].gt_pts_seg.pts_instance_mask.cpu().numpy() & 0xFFFF
-                valid = np.isin(sem, list(things_ids)).reshape(-1)
-                data_samples[i].gt_pts_seg.pts_valid = valid
+                if hasattr(data_samples[i].gt_pts_seg, 'pts_instance_mask'):
+                    offset = np.zeros([b.shape[0], 3], dtype=np.float32)
+                    offset = nb_aggregate_pointwise_center_offset(offsets=offset, 
+                                                                xyz=b.cpu().numpy(), 
+                                                                ins_labels=data_samples[i].gt_pts_seg.pts_instance_mask.cpu().numpy(), 
+                                                                center_type='Axis_center')
+                    data_samples[i].gt_pts_seg.pts_offsets = torch.from_numpy(offset).cuda()
+                    
+                    sem = data_samples[i].gt_pts_seg.pts_instance_mask.cpu().numpy() & 0xFFFF
+                    valid = np.isin(sem, list(things_ids)).reshape(-1)
+                    data_samples[i].gt_pts_seg.pts_valid = valid
             
             if self.voxel:
                 voxel_dict = self.voxelize(inputs['points'], data_samples)
