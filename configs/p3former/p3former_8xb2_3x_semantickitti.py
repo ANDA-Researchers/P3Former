@@ -40,7 +40,7 @@ optim_wrapper = dict(
     optimizer=dict(type='AdamW', lr=lr, weight_decay=0.01))
 
 
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=36, val_interval=20)
+train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=40, val_interval=1)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 
@@ -54,7 +54,7 @@ param_scheduler = [
         gamma=0.2)
 ]
 
-train_dataloader = dict(batch_size=1, )
+train_dataloader = dict(batch_size=2, )
 
 default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=1))
 

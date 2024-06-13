@@ -167,16 +167,17 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
 
             #  compute offset
             for i, b in enumerate(batch_inputs['points']):
-                offset = np.zeros([b.shape[0], 3], dtype=np.float32)
-                offset = nb_aggregate_pointwise_center_offset(offsets=offset, 
-                                                            xyz=b.cpu().numpy(), 
-                                                            ins_labels=data_samples[i].gt_pts_seg.pts_instance_mask.cpu().numpy(), 
-                                                            center_type='Axis_center')
-                data_samples[i].gt_pts_seg.pts_offsets = torch.from_numpy(offset).cuda()
-                
-                sem = data_samples[i].gt_pts_seg.pts_instance_mask.cpu().numpy() & 0xFFFF
-                valid = np.isin(sem, list(things_ids)).reshape(-1)
-                data_samples[i].gt_pts_seg.pts_valid = valid
+                if hasattr(data_samples[i].gt_pts_seg, 'pts_instance_mask'):
+                    offset = np.zeros([b.shape[0], 3], dtype=np.float32)
+                    offset = nb_aggregate_pointwise_center_offset(offsets=offset, 
+                                                                xyz=b.cpu().numpy(), 
+                                                                ins_labels=data_samples[i].gt_pts_seg.pts_instance_mask.cpu().numpy(), 
+                                                                center_type='Axis_center')
+                    data_samples[i].gt_pts_seg.pts_offsets = torch.from_numpy(offset).cuda()
+                    
+                    sem = data_samples[i].gt_pts_seg.pts_instance_mask.cpu().numpy() & 0xFFFF
+                    valid = np.isin(sem, list(things_ids)).reshape(-1)
+                    data_samples[i].gt_pts_seg.pts_valid = valid
             
             if self.voxel:
                 voxel_dict = self.voxelize(inputs['points'], data_samples)
@@ -503,6 +504,10 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
             if hasattr(data_sample.gt_pts_seg, 'pts_instance_mask'):
                 pts_instance_mask = data_sample.gt_pts_seg.pts_instance_mask
                 pts_semantic_mask = data_sample.gt_pts_seg.pts_semantic_mask
+                _, _, point2voxel_map = dynamic_scatter_3d(
+                    F.one_hot(pts_semantic_mask.long()).float(), res_coors, 'mean',
+                    True)
+                data_sample.gt_pts_seg.point2voxel_map = point2voxel_map
                 num_points = res_coors.shape[0]
 
                 _, unique_indices_inverse = torch.unique(
@@ -532,6 +537,7 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
                 voxel_semantic_labels = ins2sem[voxel_instance_labels - 1]
                 data_sample.gt_pts_seg.voxel_semantic_mask = voxel_semantic_labels
                 data_sample.gt_pts_seg.voxel_instance_mask = voxel_instance_labels
+                
             else:
                 pts_semantic_mask = data_sample.gt_pts_seg.pts_semantic_mask
                 voxel_semantic_mask, _, point2voxel_map = dynamic_scatter_3d(
