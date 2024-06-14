@@ -18,6 +18,9 @@ from mmdet3d.models.data_preprocessors.utils import multiview_img_stack_batch
 from mmdet3d.models.data_preprocessors.voxelize import VoxelizationByGridShape, dynamic_scatter_3d
 import torch_scatter
 
+from debug_utils.debug_utils import draw_point_with, write_img
+
+things_ids = set([10, 11, 13, 15, 16, 18, 20, 30, 31, 32, 252, 253, 254, 255, 256, 257, 258, 259])
 
 @MODELS.register_module(force=True)
 class _Det3DDataPreprocessor(DetDataPreprocessor):
@@ -105,6 +108,7 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
             batch_augments=batch_augments)
         self.voxel = voxel
         self.voxel_type = voxel_type
+        self.grid_shape = voxel_layer['grid_shape']
         if voxel:
             self.voxel_layer = VoxelizationByGridShape(**voxel_layer)
 
@@ -158,7 +162,23 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
 
         if 'points' in inputs:
             batch_inputs['points'] = inputs['points']
+            # get valid points as thing points
+            # valid = data_samples[0].gt_pts_seg.pts_instance_mask != 0
 
+            #  compute offset
+            for i, b in enumerate(batch_inputs['points']):
+                if hasattr(data_samples[i].gt_pts_seg, 'pts_instance_mask'):
+                    offset = np.zeros([b.shape[0], 3], dtype=np.float32)
+                    offset = nb_aggregate_pointwise_center_offset(offsets=offset, 
+                                                                xyz=b.cpu().numpy(), 
+                                                                ins_labels=data_samples[i].gt_pts_seg.pts_instance_mask.cpu().numpy(), 
+                                                                center_type='Axis_center')
+                    data_samples[i].gt_pts_seg.pts_offsets = torch.from_numpy(offset).cuda()
+                    
+                    sem = data_samples[i].gt_pts_seg.pts_instance_mask.cpu().numpy() & 0xFFFF
+                    valid = np.isin(sem, list(things_ids)).reshape(-1)
+                    data_samples[i].gt_pts_seg.pts_valid = valid
+            
             if self.voxel:
                 voxel_dict = self.voxelize(inputs['points'], data_samples)
                 batch_inputs['voxels'] = voxel_dict
@@ -385,7 +405,7 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
             voxels = torch.cat(points, dim=0)
             coors = torch.cat(coors, dim=0)
         elif self.voxel_type == 'cylindrical':
-            voxels, coors = [], []
+            voxels, coors, grid_inds = [], [], []
             for i, (res, data_sample) in enumerate(zip(points, data_samples)):
                 rho = torch.sqrt(res[:, 0]**2 + res[:, 1]**2)
                 phi = torch.atan2(res[:, 1], res[:, 0])
@@ -415,8 +435,23 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
                                        dim=-1)
                 voxels.append(res_voxels)
                 coors.append(res_coors)
+
+                #  grid index
+                crop_range = max_bound - min_bound
+                cur_grid_size = np.array(self.grid_shape)
+                intervals = crop_range.cpu().numpy()/(cur_grid_size-1) # (size-1) could directly get index starting from 0, very convenient
+
+                if (intervals==0).any(): print("Zero interval!")
+                # clipped = torch.clamp(polar_res, min=min_bound, max=max_bound)
+                # grid_ind = (torch.floor((clipped-min_bound)/torch.from_numpy(intervals).cuda())).int() # point-wise grid index
+                # grid_inds.append(grid_ind)
+                grid_ind = (np.floor((np.clip(polar_res.cpu().numpy(),min_bound.cpu().numpy(),max_bound.cpu().numpy())-min_bound.cpu().numpy())/intervals)).astype(np.int32) # point-wise grid index
+                grid_inds.append(grid_ind)
+
+
             voxels = torch.cat(voxels, dim=0)
             coors = torch.cat(coors, dim=0)
+            # grid_inds = torch.cat(grid_inds, dim=0)s
         elif self.voxel_type == 'minkunet':
             voxels, coors = [], []
             voxel_size = points[0].new_tensor(self.voxel_layer.voxel_size)
@@ -441,6 +476,9 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
                 data_sample.voxel2point_map = voxel2point_map.long()
                 voxels.append(res_voxels)
                 coors.append(res_voxel_coors)
+            # crop_range = max_bound - min_bound
+            # cur_grid_size = self.voxel_layer.grid_size
+            # intervals = crop_range/(cur_grid_size-1)
             voxels = torch.cat(voxels, dim=0)
             coors = torch.cat(coors, dim=0)
 
@@ -449,6 +487,7 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
 
         voxel_dict['voxels'] = voxels
         voxel_dict['coors'] = coors
+        voxel_dict['grid'] = grid_inds
 
         return voxel_dict
 
@@ -465,6 +504,10 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
             if hasattr(data_sample.gt_pts_seg, 'pts_instance_mask'):
                 pts_instance_mask = data_sample.gt_pts_seg.pts_instance_mask
                 pts_semantic_mask = data_sample.gt_pts_seg.pts_semantic_mask
+                _, _, point2voxel_map = dynamic_scatter_3d(
+                    F.one_hot(pts_semantic_mask.long()).float(), res_coors, 'mean',
+                    True)
+                data_sample.gt_pts_seg.point2voxel_map = point2voxel_map
                 num_points = res_coors.shape[0]
 
                 _, unique_indices_inverse = torch.unique(
@@ -494,6 +537,7 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
                 voxel_semantic_labels = ins2sem[voxel_instance_labels - 1]
                 data_sample.gt_pts_seg.voxel_semantic_mask = voxel_semantic_labels
                 data_sample.gt_pts_seg.voxel_instance_mask = voxel_instance_labels
+                
             else:
                 pts_semantic_mask = data_sample.gt_pts_seg.pts_semantic_mask
                 voxel_semantic_mask, _, point2voxel_map = dynamic_scatter_3d(
@@ -558,3 +602,36 @@ class _Det3DDataPreprocessor(DetDataPreprocessor):
         if return_inverse:
             outputs += [inverse_indices]
         return outputs
+
+def calc_xyz_middle(xyz):
+    return np.array([
+        (np.max(xyz[:, 0]) + np.min(xyz[:, 0])) / 2.0,
+        (np.max(xyz[:, 1]) + np.min(xyz[:, 1])) / 2.0,
+        (np.max(xyz[:, 2]) + np.min(xyz[:, 2])) / 2.0
+    ], dtype=np.float32)
+
+
+
+# @nb.jit #TODO: why jit would lead to offsets all zero?
+def nb_aggregate_pointwise_center_offset(offsets, xyz, ins_labels, center_type):
+    # ins_num = np.max(ins_labels) + 1
+    # for i in range(1, ins_num):
+    xyz = xyz[:, :3]
+    for i in np.unique(ins_labels):
+        # if ((i & 0xFFFF0000) >> 16) == 0: #TODO: change to use thing list to filter
+        #     continue
+        if (i & 0xFFFF) not in things_ids:
+            continue
+        i_indices = (ins_labels == i).reshape(-1)
+        xyz_i = xyz[i_indices]
+        if xyz_i.shape[0] <= 0:
+            continue
+        if center_type == 'Axis_center':
+            mean_xyz = calc_xyz_middle(xyz_i)
+        elif center_type == 'Mass_center':
+            mean_xyz = np.mean(xyz_i, axis=0)
+        else:
+            raise NotImplementedError
+        offsets[i_indices] = mean_xyz - xyz_i
+
+    return offsets

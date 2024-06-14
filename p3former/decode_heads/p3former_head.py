@@ -12,6 +12,10 @@ from mmengine.structures import InstanceData
 
 from mmcv.ops import SubMConv3d
 
+import torch_scatter
+from sklearn.cluster import HDBSCAN
+from debug_utils.debug_utils import draw_point_with, write_img
+
 @MODELS.register_module()
 class _Masked_Focal_Attention(nn.Module):
     def __init__(self,
@@ -213,11 +217,15 @@ class _P3FormerHead(nn.Module):
                  iou_thr=0.8,
                  mask_score_thr=0.5,
                  grid_size=[480, 360, 32],
-                 point_cloud_range=[]):
+                 point_cloud_range=[],
+                 use_centroid=True):
         super().__init__()
 
-        self.queries = SubMConv3d(embed_dims, num_queries, indice_key="logit", 
-                                    kernel_size=1, stride=1, padding=0, bias=False)
+        if not use_centroid:
+            self.queries = SubMConv3d(embed_dims, num_queries, indice_key="logit", 
+                                        kernel_size=1, stride=1, padding=0, bias=False)
+        
+        self.use_centroid = use_centroid
         self.num_classes = num_classes
         self.ignore_index = ignore_index
         self.mask_score_thr = mask_score_thr
@@ -310,22 +318,106 @@ class _P3FormerHead(nn.Module):
     def init_inputs(self,
                     features,
                     voxel_coors,
-                    batch_size):
+                    batch_size,
+                    embedding=None,
+                    batch_data_samples=None,):
 
         pe_features, mpe = self.mpe(features, voxel_coors, batch_size)
-        queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
-        queries = [queries[i] for i in range(queries.shape[0])]
+        
+        if not self.use_centroid:
+            queries = self.queries.weight.clone().squeeze(0).squeeze(0).repeat(batch_size,1,1).permute(0,2,1)
+        else:
+            # normed_polar_coors = [
+            #     voxel_coor[:, 1:] / voxel_coor.new_tensor(self.grid_size)[None, :].float()
+            #     for voxel_coor in voxel_coors
+            # ]
+            
+            # cat_coors = []
+            # for idx in range(len(normed_polar_coors)):
+            #     normed_polar_coor = normed_polar_coors[idx].clone()
+            #     polar_coor = normed_polar_coor.new_zeros(normed_polar_coor.shape)
+            #     for i in range(3):
+            #         polar_coor[:, i] = normed_polar_coor[:, i]*(
+            #                             self.point_cloud_range[i+3] -
+            #                             self.point_cloud_range[i]) + \
+            #                             self.point_cloud_range[i]
+            #     x = polar_coor[:, 0] * torch.cos(polar_coor[:, 1])
+            #     y = polar_coor[:, 0] * torch.sin(polar_coor[:, 1])
+            #     cat_coor = torch.stack([x, y, polar_coor[:, 2]], 1)
+            #     cat_coors.append(cat_coor)
 
+            min_cluster_size = 10
+            max_num_points = 80_000
+            max_num_clusters = self.num_queries
+            hdb = HDBSCAN(min_cluster_size, n_jobs=-1)
+            
+        queries_buffer = []
         sem_preds = []
+        
         if self.use_sem_loss:
             sem_queries = self.sem_queries.weight.clone().squeeze(-1).squeeze(-1).repeat(1,1,batch_size).permute(2,0,1)
             for b in range(len(pe_features)):
                 sem_pred = torch.einsum("nc,vc->vn", sem_queries[b], pe_features[b])
                 sem_preds.append(sem_pred)
                 stuff_queries = sem_queries[b][self.stuff_class]
-                queries[b] = torch.cat([queries[b], stuff_queries], dim=0)
+                
+                if not self.use_centroid:
+                    queries_buffer.append(torch.cat([queries[b], stuff_queries], dim=0))
+                    continue
+                
+                foreground_mask = torch.isin(
+                    sem_pred.argmax(dim=1),
+                    torch.tensor(self.thing_class, device=sem_pred.device),
+                )
+                if foreground_mask.sum() < min_cluster_size:
+                    queries_buffer.append(stuff_queries)
+                    continue
+                
+                # # Get thing valid points
+                # sem_pred_label = sem_pred.argmax(dim=1)
 
-        return queries, pe_features, mpe, sem_preds
+
+                point2voxel_map = batch_data_samples[
+                    b].gt_pts_seg.point2voxel_map.long()
+                # point_semantic_sample = sem_pred_label[point2voxel_map]
+                # valid = torch.isin(point_semantic_sample, 
+                #                    torch.tensor(self.thing_class, device=sem_pred.device))
+                
+                
+                
+                thing_cat_coors = torch_scatter.scatter_mean(embedding[b], point2voxel_map.unsqueeze(1), dim=0)
+
+                thing_cat_coors = thing_cat_coors[foreground_mask]
+                thing_features = pe_features[b][foreground_mask]
+                
+                # thing_cat_coors = torch.cat([thing_cat_coors, embedding[b]], dim=0)
+                if thing_cat_coors.size(dim=0) > max_num_points:
+                    idx = torch.randperm(thing_cat_coors.size(0))[:max_num_points]
+                    thing_cat_coors = thing_cat_coors[idx]
+                    thing_features = thing_features[idx]
+                    
+                cluster_labels = (
+                    torch.from_numpy(hdb.fit_predict(thing_cat_coors.cpu().numpy()))
+                    .to(thing_cat_coors.device)
+                )
+                
+                unique_clusters, point_counts = cluster_labels.unique(return_counts=True)
+                valid_idx = unique_clusters != -1
+                point_counts = point_counts[valid_idx]
+                unique_clusters = unique_clusters[valid_idx]
+                if unique_clusters.size(0) > max_num_clusters:
+                    idx = point_counts.topk(max_num_clusters).indices
+                    unique_clusters = unique_clusters[idx]
+                    cluster_labels[torch.isin(cluster_labels, unique_clusters, invert=True)] = -1
+                    
+                valid_idx = cluster_labels != -1
+                centroid_features = torch_scatter.scatter_mean(
+                    thing_features[valid_idx], cluster_labels[valid_idx], dim=0
+                )
+                
+                queries_buffer.append(torch.cat([centroid_features, stuff_queries], dim=0))
+                    
+        return queries_buffer, pe_features, mpe, sem_preds
 
     def mpe(self, features, voxel_coors, batch_size):
         """Encode features with sparse indices."""
@@ -397,8 +489,15 @@ class _P3FormerHead(nn.Module):
         return features, mpe
 
     def forward(self,
-                features,
-                voxel_coors):
+                batch_inputs,
+                batch_data_samples=None,):
+        features = batch_inputs['features']
+        voxel_coors = batch_inputs['voxels']['voxel_coors']
+        if self.use_centroid:
+            embedding = batch_inputs['embedding']
+        else:
+            embedding = None
+
         class_preds_buffer = []
         mask_preds_buffer = []
         pos_mask_preds_buffer = []
@@ -411,7 +510,7 @@ class _P3FormerHead(nn.Module):
             voxel_coor_split.append(voxel_coors[voxel_coors[:, 0] == i])
 
         queries, features, mpe, sem_preds = self.init_inputs(
-            feature_split, voxel_coor_split, batch_size)
+            feature_split, voxel_coor_split, batch_size, embedding=embedding, batch_data_samples=batch_data_samples)
         _, mask_preds, pos_mask_preds = self.pa_seg(queries, features, mpe, layer=0)
         class_preds_buffer.append(None)
         mask_preds_buffer.append(mask_preds)
@@ -425,7 +524,7 @@ class _P3FormerHead(nn.Module):
         return class_preds_buffer, mask_preds_buffer, pos_mask_preds_buffer, sem_preds
 
     def loss(self, batch_inputs, batch_data_samples, train_cfg):
-        class_preds_buffer, mask_preds_buffer, pos_mask_preds_buffer, sem_preds = self.forward(batch_inputs['features'], batch_inputs['voxels']['voxel_coors'])
+        class_preds_buffer, mask_preds_buffer, pos_mask_preds_buffer, sem_preds = self.forward(batch_inputs, batch_data_samples)
         cls_targets_buffer, mask_targets_buffer, label_weights_buffer = self.bipartite_matching(class_preds_buffer, mask_preds_buffer, pos_mask_preds_buffer, batch_data_samples)
         losses = dict()
         for i in range(self.num_decoder_layers+1):
@@ -447,6 +546,9 @@ class _P3FormerHead(nn.Module):
     def bipartite_matching(self, class_preds, mask_preds, pos_mask_preds, batch_data_samples):
         gt_classes, gt_masks = self.generate_mask_class_target(batch_data_samples)
 
+        gt_classes = [gt_classes[i] for i in range(len(gt_classes))]
+        gt_masks = [gt_masks[i] for i in range(len(gt_masks))]
+
         gt_thing_classes = []
         gt_thing_masks = []
         gt_stuff_classes = []
@@ -466,7 +568,7 @@ class _P3FormerHead(nn.Module):
 
         sampling_results = []
         for b in range(len(mask_preds[0])):
-            thing_masks_pred_detach = mask_preds[0][b][:self.num_queries,:].detach()
+            thing_masks_pred_detach = mask_preds[0][b][:self.num_queries[b],:].detach()
             sampled_gt_instances = InstanceData(
                 labels=gt_thing_classes[b], masks=gt_thing_masks[b])
             sampled_pred_instances = InstanceData(masks=thing_masks_pred_detach)
@@ -489,11 +591,11 @@ class _P3FormerHead(nn.Module):
             sampling_results = []
             for b in range(len(mask_preds[0])):
                 if class_preds[layer] is not None:
-                    thing_class_pred_detach = class_preds[layer][b][:self.num_queries,:].detach()
+                    thing_class_pred_detach = class_preds[layer][b][:self.num_queries[b],:].detach()
                 else:
                     # for layer 1, we don't have class_preds from layer 0, so we use class_preds from layer 1 for matching
-                    thing_class_pred_detach = class_preds[layer+1][b][:self.num_queries,:].detach()
-                thing_masks_pred_detach = thing_masks_pred_detach = mask_preds[layer][b][:self.num_queries,:].detach()
+                    thing_class_pred_detach = class_preds[layer+1][b][:self.num_queries[b],:].detach()
+                thing_masks_pred_detach = thing_masks_pred_detach = mask_preds[layer][b][:self.num_queries[b],:].detach()
                 sampled_gt_instances = InstanceData(
                     labels=gt_thing_classes[b], masks=gt_thing_masks[b])
                 sampled_pred_instances = InstanceData(
@@ -518,11 +620,14 @@ class _P3FormerHead(nn.Module):
         batch_size = len(mask_preds)
         losses = dict()
 
+        bool_pos_inds_split = []
+        for class_target in class_targets:
+            pos_inds = (class_target != self.ignore_index) & (
+                class_target < self.num_classes)
+            bool_pos_inds = pos_inds.type(torch.bool)
+            bool_pos_inds_split.append(bool_pos_inds)
+            
         class_targets = torch.cat(class_targets, 0)
-        pos_inds = (class_targets != self.ignore_index) & (
-            class_targets < self.num_classes)
-        bool_pos_inds = pos_inds.type(torch.bool)
-        bool_pos_inds_split = bool_pos_inds.reshape(batch_size, -1)
 
         if class_preds is not None:
             class_preds = torch.cat(class_preds, 0)  # [B*N]
@@ -690,7 +795,7 @@ class _P3FormerHead(nn.Module):
         return labels, mask_targets, label_weights, mask_weights
 
     def predict(self, batch_inputs, batch_data_samples):
-        class_preds_buffer, mask_preds_buffer, _, _ = self.forward(batch_inputs['features'], batch_inputs['voxels']['voxel_coors'])
+        class_preds_buffer, mask_preds_buffer, _, _ = self.forward(batch_inputs, batch_data_samples)
         semantic_preds, instance_ids = self.generate_panoptic_results(class_preds_buffer[-1], mask_preds_buffer[-1])
         semantic_preds = torch.cat(semantic_preds)
         instance_ids = torch.cat(instance_ids)
@@ -798,12 +903,12 @@ class _P3FormerHead(nn.Module):
             class_pred = class_preds[i]
             mask_pred = mask_preds[i]
 
-            scores = class_pred[:self.num_queries][:, self.thing_class]
+            scores = class_pred[:-self.num_stuff_classes][:, self.thing_class]
             thing_scores, thing_labels = scores.sigmoid().max(dim=1)
             thing_scores *= 2
             thing_labels += self.thing_class[0]
             stuff_scores = class_pred[
-                self.num_queries:][:, self.stuff_class].diag().sigmoid()
+                -self.num_stuff_classes:][:, self.stuff_class].diag().sigmoid()
             stuff_labels = torch.tensor(self.stuff_class)
             stuff_labels = stuff_labels.to(thing_labels.device)
 
@@ -848,3 +953,5 @@ class _P3FormerHead(nn.Module):
             semantic_preds.append(semantic_pred)
             instance_ids.append(instance_id)
         return (semantic_preds, instance_ids)
+
+

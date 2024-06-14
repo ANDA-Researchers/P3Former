@@ -155,7 +155,7 @@ train_pipeline = [
                     type='_PolarMix',
                     instance_classes=[0, 1, 2, 3, 4, 5, 6, 7],
                     swap_ratio=0.5,
-                    rotate_paste_ratio=1.0,
+                    rotate_paste_ratio=1,
                     pre_transform=[
                         dict(
                             type='LoadPointsFromFile',
@@ -176,6 +176,7 @@ train_pipeline = [
             ],
         ],
         prob=[0.2, 0.8]),
+        # prob=[1, 0]),
     dict(
         type='RandomFlip3D',
         sync_2d=False,

@@ -54,7 +54,7 @@ param_scheduler = [
         gamma=0.2)
 ]
 
-train_dataloader = dict(batch_size=2, )
+train_dataloader = dict(batch_size=1, )
 
 test_pipeline = [
     dict(
@@ -67,7 +67,7 @@ test_pipeline = [
 ]
 
 test_dataloader = dict(
-    batch_size=1,
+    batch_size=5,
     num_workers=1,
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
@@ -75,7 +75,7 @@ test_dataloader = dict(
         times=1,
         dataset=dict(
             pipeline=test_pipeline,
-            ann_file='semantickitti_infos_mini.pkl'))
+            ann_file='semantickitti_infos_test.pkl'))
 )
 
 test_evaluator = dict(submission_prefix='semantickitti_submission')
@@ -88,6 +88,7 @@ custom_imports = dict(
         'p3former.data_preprocessors.data_preprocessor',
         'p3former.decode_heads.p3former_head',
         'p3former.segmentors.p3former',
+        'p3former.center_head.center_head',
         'p3former.task_modules.samplers.mask_pseduo_sampler',
         'evaluation.metrics.panoptic_seg_metric',
         'datasets.semantickitti_dataset',

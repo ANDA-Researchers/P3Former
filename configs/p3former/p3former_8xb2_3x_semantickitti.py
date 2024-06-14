@@ -36,11 +36,11 @@ model = dict(
 
 lr = 0.0008
 optim_wrapper = dict(
-    type='OptimWrapper',
+    type='AmpOptimWrapper',
     optimizer=dict(type='AdamW', lr=lr, weight_decay=0.01))
 
 
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=36, val_interval=10)
+train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=40, val_interval=1)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 
@@ -54,7 +54,7 @@ param_scheduler = [
         gamma=0.2)
 ]
 
-train_dataloader = dict(batch_size=1, )
+train_dataloader = dict(batch_size=2, )
 
 default_hooks = dict(checkpoint=dict(type='CheckpointHook', interval=1))
 
@@ -64,6 +64,7 @@ custom_imports = dict(
         'p3former.data_preprocessors.data_preprocessor',
         'p3former.decode_heads.p3former_head',
         'p3former.segmentors.p3former',
+        'p3former.center_head.center_head',
         'p3former.task_modules.samplers.mask_pseduo_sampler',
         'evaluation.metrics.panoptic_seg_metric',
         'datasets.semantickitti_dataset',

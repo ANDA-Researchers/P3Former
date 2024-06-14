@@ -10,8 +10,8 @@
             "request": "launch",
             "program": "test.py",
             "console": "integratedTerminal",
-            "env": {"CUDA_HOME": "$CONDA_PREFIX", "CUDA_VISIBLE_DEVICES": "0"},
-            "args": ["configs/p3former/p3former_8xb2_3x_semantickitti.py", "semantickitti_val_62.6.pth", "--work_dir"]
+            "env": {"CUDA_HOME": "$CONDA_PREFIX", "CUDA_VISIBLE_DEVICES": "0, 1"},
+            "args": ["configs/p3former/p3former_8xb2_3x_semantickitti.py", "epoch_20.pth"]
         },
         {
             "name": "train",
@@ -19,8 +19,9 @@
             "request": "launch",
             "program": "train.py",
             "console": "integratedTerminal",
-            "env": {"CUDA_HOME": "$CONDA_PREFIX", "CUDA_VISIBLE_DEVICES": "0"},
-            "args": ["configs/p3former/p3former_8xb2_3x_semantickitti.py"]
+            "env": {"CUDA_HOME": "$CONDA_PREFIX", "CUDA_VISIBLE_DEVICES": "0, 1", "PYTORCH_CUDA_ALLOC_CONF": "caching_allocator"},
+            "args": ["configs/p3former/p3former_8xb2_3x_semantickitti.py"],
+            "justMyCode": false
         }
     ]
 }
