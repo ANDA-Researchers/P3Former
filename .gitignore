@@ -4,5 +4,6 @@
 .vscode/
 __pycache__/
 data/
-semantickitti_submission/
+centroidformer_submission/
+p3former_submission/
 work_dirs/
