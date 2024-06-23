@@ -75,7 +75,7 @@ test_dataloader = dict(
         times=1,
         dataset=dict(
             pipeline=test_pipeline,
-            ann_file='semantickitti_infos_test.pkl'))
+            ann_file='semantickitti_infos_val.pkl'))
 )
 
 test_evaluator = dict(submission_prefix='semantickitti_submission')
